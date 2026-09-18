@@ -6,6 +6,8 @@
 
 **Stop copy-pasting between ChatGPT and Claude Code.**
 
+<img src="docs/session.svg" alt="A duet session: Claude Code and ChatGPT taking turns until both sign off" width="760">
+
 You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
 what Claude built. Paste it back to ChatGPT. "Looks good, but you missed the error
 case." Paste that into Claude Code. Repeat until you get bored and ship it.
@@ -309,6 +311,38 @@ for correctness bugs. All four were real. That's the premise working on its auth
 pytest -q
 duet demo     # the real orchestrator against scripted peers
 ```
+
+---
+
+## "Why not just…"
+
+**…use one agent and read the diff yourself?** Do, when you have time. duet is for the
+changes you would otherwise skim. The reviewer's job is to be awake for the boring parts
+you stopped checking around file nine.
+
+**…ask the same model to review its own work?** You can, and it helps a little. But it
+reviews with the same blind spot that produced the bug, and it is agreeable about its
+own output in a way it is not about someone else's. Every bug in
+[docs/QA.md](docs/QA.md) that ChatGPT found in this codebase was in code Claude had
+already reviewed and been happy with.
+
+**…just use your CI?** CI tells you a test failed. It does not tell you the test never
+covered the case, that the fix papered over the cause, or that the README now claims
+something untrue. duet runs your CI *and* has something read the change.
+
+**…copy-paste between the two yourself?** That is exactly what this replaces, and you
+already know how it goes: by round three you are summarising instead of pasting, you
+drop the objection you did not fully understand, and both sides lose the thread. The
+machine does not get bored at round three.
+
+**Isn't this just two models agreeing with each other?** It would be, without the rules.
+An objection closes only when the agent who *raised* it drops it. A sign-off dies the
+moment the workspace changes. Your gate outranks both of them. Take those away and yes,
+you would have two chatbots nodding — which is why they are enforced by the harness and
+not by the prompt.
+
+**What does it cost?** Roughly double one agent, times the rounds. `duet review` is a
+single call. Both bill to subscriptions you already have, not per-token API keys.
 
 ---
 
