@@ -414,7 +414,10 @@ def test_a_reviewer_that_edits_the_tree_does_not_get_a_clean_exit(tmp_path, caps
 
     out = capsys.readouterr().out
     assert "no findings" in out                    # what it said is still shown
-    assert "modified the workspace while reviewing it" in out
+    assert "the workspace changed while" in out
+    # duet sees the change, not who made it, so the message must not assert
+    # that the reviewer did it — it fired once on an unrelated concurrent edit.
+    assert "held read-only" in out
     assert (root / "loader.py").read_text() == "print('I fixed it myself')\n"
 
     # A second run needs the reviewer to write something new: rewriting the same
