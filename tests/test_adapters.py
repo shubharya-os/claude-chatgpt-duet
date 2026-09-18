@@ -430,6 +430,23 @@ printf '%s' '{"message":"ok","verdict":"DONE"}' > "$out"
     assert "--last" in dump.read_text()
 
 
+def test_codex_state_round_trips_so_a_resumed_duet_session_keeps_continuity(tmp_path):
+    """`turns` is this adapter's whole memory, and `duet resume` rebuilds from it.
+
+    It only changes anything when `use_resume` is on, but that is precisely the
+    setting where losing it starts codex from scratch behind the user's back.
+    """
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path), config={"use_resume": True})
+    agent.turns = 3
+    restored = CodexCliAdapter(name="gpt", cwd=str(tmp_path), config={"use_resume": True})
+    assert restored.turns == 0
+    restored.restore(agent.state())
+    assert restored.turns == 3
+
+    restored.restore({})                       # a state file from before this existed
+    assert restored.turns == 0
+
+
 def test_codex_resume_can_be_switched_off(tmp_path, monkeypatch):
     dump = tmp_path / "args.txt"
     monkeypatch.setenv("ARGDUMP", str(dump))

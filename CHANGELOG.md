@@ -10,6 +10,10 @@
   held read-only by its backend rather than by the prompt.
 - `duet verify` — re-run the gate and check the last sign-off still describes this
   workspace.
+- `duet resume` — carry on a session that died mid-argument instead of paying for the
+  same 20–40 minutes twice. It rebuilds the orchestrator from the state file the dead
+  session was already writing after every turn, so the open objections, both sign-offs,
+  the arbitration rulings and the round numbering all survive.
 - `--pair` — any two agents in either order: `claude+codex`, `codex+claude`,
   `claude+gpt`, `claude:opus+claude:sonnet`.
 - Subscription sign-in on both sides. No API keys by default.

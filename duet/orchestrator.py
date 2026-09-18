@@ -31,6 +31,30 @@ STATUS_ERROR = "error"
 STATUS_INTERRUPTED = "interrupted"
 
 
+def rounds_taken(data: Dict[str, Any]) -> int:
+    """How many rounds a saved session got through, from its state.json.
+
+    `rounds` is written by `_save`; the fallbacks read it out of the rounds
+    stamped on the last envelopes and sign-offs, so a state file written by an
+    older duet still resumes at the right number instead of re-running turns.
+    """
+    candidates = [0]
+    try:
+        candidates.append(int(data.get("rounds") or 0))
+    except (TypeError, ValueError):
+        pass
+    state = data.get("state") or {}
+    records = list((data.get("last_envelope") or {}).values())
+    records += list((state.get("signoffs") or {}).values())
+    records += [{"round": a.get("round")} for a in state.get("arbitrations") or []]
+    for record in records:
+        try:
+            candidates.append(int((record or {}).get("round") or 0))
+        except (TypeError, ValueError, AttributeError):
+            pass
+    return max(candidates)
+
+
 @dataclass
 class SessionResult:
     status: str
@@ -78,6 +102,11 @@ class Orchestrator:
         self.session_dir = Path(config.root).resolve() / ".duet" / "sessions" / self.session_id
         self.turns: List[TurnRecord] = []
         self.history: List[str] = []
+        # Where the round counter stands. `restore` moves both forward so a
+        # resumed session carries on counting instead of re-running rounds.
+        self.start_round = 1
+        self.round_no = 0
+        self.resumed_from = ""
         self.pending_directive: Dict[str, str] = {}
         self.pending_reads: Dict[str, List[str]] = {}
         self.pending_patch_log: Dict[str, List[str]] = {}
@@ -182,6 +211,7 @@ class Orchestrator:
 
     def take_turn(self, agent: str, round_no: int, directive: str = "", ingest: bool = True) -> TurnRecord:
         adapter = self.adapters[agent]
+        self.round_no = max(self.round_no, round_no)
         digest_before = self.workspace.digest()
         prompt = self._build_prompt(agent, round_no, directive, digest_before)
         role = self.role_of(agent, round_no)
@@ -297,6 +327,69 @@ class Orchestrator:
         self.history.append("R%-2d ARBITRATION on %s -> %s (by %s)" % (round_no, issue.id, text[:80], decider))
         self.emit("arbitration_done", round=round_no, issue=issue.id, decider=decider, ruling=text)
 
+    # -- resuming ---------------------------------------------------------
+    def restore(self, data: Dict[str, Any]) -> List[str]:
+        """Rebuild the argument from a session's saved state.json.
+
+        Everything the next prompt is built out of: the issue ledger with each
+        objection's age, both last verdicts and sign-offs, the arbitration
+        record, the round history, the peer messages, and each adapter's own
+        thread with its backend. Returns any notes worth printing.
+
+        What is deliberately *not* restored is the workspace digest and the gate
+        result. Both are recomputed on the first turn, because the tree may have
+        been edited — or fixed — while the session was dead.
+
+        Raises ValueError if the saved argument was had between agents this pair
+        does not contain. Every issue in the ledger is attributed to a name, and
+        resuming under different names would hand one agent the other's
+        objections — so this refuses rather than guessing.
+        """
+        notes: List[str] = []
+        saved = data.get("state") or {}
+        if saved:
+            recorded = [a for a in (saved.get("agents") or []) if a]
+            if recorded and sorted(recorded) != sorted(self.config.agent_names):
+                raise ValueError(
+                    "the saved argument was between %s, but this session's config builds "
+                    "%s — the issue ledger names agents who would not be in the room"
+                    % (", ".join(recorded), ", ".join(self.config.agent_names))
+                )
+            self.state = DebateState.from_dict(
+                saved, max_debate=self.config.max_debate, stall_limit=self.config.stall_limit
+            )
+            if not self.state.agents:
+                self.state.agents = list(self.config.agent_names)
+        self.history = [str(line) for line in data.get("history") or []]
+        for name, raw in (data.get("last_envelope") or {}).items():
+            if name in self.adapters and isinstance(raw, dict):
+                self.last_envelope[name] = Envelope.from_dict(raw)
+        for name, raw in (data.get("adapters") or {}).items():
+            if name in self.adapters and isinstance(raw, dict):
+                self.adapters[name].restore(raw)
+
+        # A directive is owed to an agent, not said to it yet: "your last reply
+        # had no envelope, re-send it", or the instruction to break a stall.
+        # Dropping the stall one costs the most — detecting a stall also zeroes
+        # the counter, so losing the directive erases the finding as well, and
+        # the pair has to grind out another full stall window to notice again.
+        for name, directive in (data.get("pending_directive") or {}).items():
+            if name in self.adapters and str(directive or "").strip():
+                self.pending_directive[name] = str(directive)
+
+        # A BLOCKED verdict is why that session stopped. The human has since
+        # asked for it to carry on, so it is history, not a live position:
+        # leaving it in place would end the resumed session after one turn,
+        # before its author ever got to speak again.
+        for agent in [a for a, v in self.state.last_verdict.items() if v == "BLOCKED"]:
+            self.state.last_verdict.pop(agent)
+            notes.append("%s's BLOCKED verdict is cleared — resuming gives them a fresh turn" % agent)
+
+        self.resumed_from = str(data.get("session_id") or "")
+        self.round_no = rounds_taken(data)
+        self.start_round = self.round_no + 1
+        return notes
+
     # -- the loop ---------------------------------------------------------
     def run(self) -> SessionResult:
         cfg = self.config
@@ -316,14 +409,16 @@ class Orchestrator:
             order=order,
             gate=cfg.gate,
             max_rounds=cfg.max_rounds,
+            resumed_from=self.resumed_from or None,
+            start_round=self.start_round,
         )
 
         status, reason = STATUS_EXHAUSTED, "reached the %d-round limit" % cfg.max_rounds
-        round_no = 0
+        round_no = self.start_round - 1
         errors: Dict[str, int] = {name: 0 for name in cfg.agent_names}
 
         try:
-            for round_no in range(1, cfg.max_rounds + 1):
+            for round_no in range(self.start_round, cfg.max_rounds + 1):
                 agent = order[(round_no - 1) % len(order)]
                 peer = self.state.peer_of(agent)
                 digest = self.workspace.digest()
@@ -397,6 +492,9 @@ class Orchestrator:
             self.session_dir.mkdir(parents=True, exist_ok=True)
             payload = {
                 "session_id": self.session_id,
+                "resumed_from": self.resumed_from or None,
+                "rounds": self.round_no,
+                "pending_directive": dict(self.pending_directive),
                 "config": self.config.to_dict(),
                 "state": self.state.to_dict(),
                 "history": self.history,
@@ -416,7 +514,15 @@ class Orchestrator:
             pass
 
     def transcript(self) -> str:
-        lines = ["# duet session %s" % self.session_id, "", "## Task", "", self.config.task, ""]
+        lines = ["# duet session %s" % self.session_id, ""]
+        if self.resumed_from:
+            # This file holds only the turns this process took. The earlier ones
+            # are still in the session they were said in, and overwriting them
+            # here with a shorter file is how a resume would lose the argument.
+            lines += ["Resumed from `%s`: this transcript starts at round %d, and rounds "
+                      "1–%d are in that session's record."
+                      % (self.resumed_from, self.start_round, self.start_round - 1), ""]
+        lines += ["## Task", "", self.config.task, ""]
         if self.config.acceptance:
             lines += ["## Acceptance", "", self.config.acceptance, ""]
         for record in self.turns:
@@ -447,7 +553,11 @@ class Orchestrator:
             "# duet report — %s" % self.session_id,
             "",
             "**Outcome:** %s — %s" % (result.status, result.reason),
-            "**Rounds:** %d of %d" % (result.rounds, self.config.max_rounds),
+            "**Rounds:** %d of %d%s" % (
+                result.rounds, self.config.max_rounds,
+                " (resumed from `%s` at round %d)" % (self.resumed_from, self.start_round)
+                if self.resumed_from else "",
+            ),
             "**Workspace state:** `%s`" % result.digest[:8],
             "",
             "## Sign-off",

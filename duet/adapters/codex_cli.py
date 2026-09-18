@@ -189,6 +189,21 @@ class CodexCliAdapter(Adapter):
             except OSError:
                 pass
 
+    def state(self) -> Dict[str, Any]:
+        return {"session_id": self.session_id, "turns": self.turns}
+
+    def restore(self, state: Dict[str, Any]) -> None:
+        # `turns` is the whole of this adapter's memory, and the only thing it
+        # decides is whether the next call says `resume --last`. That is off by
+        # default now (see __init__), so for most pairs this restores nothing at
+        # all — but someone who set `use_resume` asked for continuity, and a duet
+        # session resumed without this would silently start codex from scratch.
+        super().restore(state)
+        try:
+            self.turns = int((state or {}).get("turns") or 0)
+        except (TypeError, ValueError):
+            self.turns = 0
+
     @classmethod
     def probe(cls, config: Optional[Dict[str, Any]] = None) -> Probe:
         binary = Adapter.which(*DEFAULT_CANDIDATES)

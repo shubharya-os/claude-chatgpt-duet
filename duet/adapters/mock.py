@@ -62,6 +62,19 @@ class MockAdapter(Adapter):
         self.turns += 1
         return AgentReply(text=text, error=failure, meta={"backend": "mock", "turn": self.turns})
 
+    def state(self) -> Dict[str, Any]:
+        return {"session_id": self.session_id, "turns": self.turns}
+
+    def restore(self, state: Dict[str, Any]) -> None:
+        # Where in the script this peer had got to. A real backend resumes its
+        # own thread across a resumed session; a mock that restarted its script
+        # would make the loop look resumable when it was only repeating itself.
+        super().restore(state)
+        try:
+            self.turns = int((state or {}).get("turns") or 0)
+        except (TypeError, ValueError):
+            self.turns = 0
+
     @classmethod
     def probe(cls, config: Optional[Dict[str, Any]] = None) -> Probe:
         return Probe(ok=True, detail="mock backend is always available")
