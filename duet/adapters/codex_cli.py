@@ -89,7 +89,15 @@ class CodexCliAdapter(Adapter):
             for args in attempts:
                 try:
                     proc = subprocess.run(
-                        args, cwd=self.cwd, capture_output=True, text=True, timeout=self.timeout
+                        args,
+                        cwd=self.cwd,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        # `codex exec` appends piped stdin to the prompt, so an
+                        # inherited pipe makes it block forever waiting for EOF.
+                        # duet is almost never run from a tty, so close it.
+                        stdin=subprocess.DEVNULL,
                     )
                 except FileNotFoundError:
                     return AgentReply(

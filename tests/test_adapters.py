@@ -317,3 +317,28 @@ def test_codex_adapter_disables_colour_so_output_stays_parseable(tmp_path, monke
     assert args[args.index("--color") + 1] == "never"
     assert args[args.index("-C") + 1] == str(tmp_path)
     assert "-o" in args
+
+
+def test_agent_clis_are_not_given_an_inherited_stdin(tmp_path):
+    """A CLI that reads stdin when it is a pipe hangs forever under duet, which
+    is never run from a tty. Both adapters must close it.
+
+    This is a regression test for a real hang: `codex exec` appends piped stdin
+    to the prompt, so a live session sat idle for eleven minutes.
+    """
+    reader = r'''
+if [ -t 0 ]; then echo "tty"; else
+  # would block indefinitely on an inherited pipe that is never closed
+  cat > /dev/null
+fi
+echo done
+'''
+    codex = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    codex.bin = fake_bin(tmp_path, "codex", reader)
+    codex.timeout = 20
+    assert codex.send("go").ok            # returns rather than hanging
+
+    claude = ClaudeCodeAdapter(name="claude", cwd=str(tmp_path))
+    claude.bin = fake_bin(tmp_path, "claude", reader)
+    claude.timeout = 20
+    assert claude.send("go").ok

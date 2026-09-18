@@ -106,6 +106,9 @@ class ClaudeCodeAdapter(Adapter):
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                # the prompt is passed with -p; an inherited stdin pipe would
+                # only give the CLI something else to wait on
+                stdin=subprocess.DEVNULL,
             )
         except FileNotFoundError:
             return AgentReply(

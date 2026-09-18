@@ -31,30 +31,35 @@ PREVIEW_CHARS = 700
 # console reporting
 # --------------------------------------------------------------------------
 def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False):
+    def say(*parts: str) -> None:
+        # A session is long and mostly waiting. Without an explicit flush, a piped
+        # or redirected run shows nothing until it ends and looks hung.
+        print(*parts, flush=True)
+
     def report(event: Dict[str, Any]) -> None:
         if as_json:
             print(json.dumps(event, default=str), flush=True)
             return
         kind = event.get("kind")
         if kind == "session_start":
-            print(ui.rule())
-            print(ui.bold("duet") + "  " + ui.dim(event.get("session", "")))
+            say(ui.rule())
+            say(ui.bold("duet") + "  " + ui.dim(event.get("session", "")))
             for name, desc in (event.get("agents") or {}).items():
-                print("  %s  %s" % (ui.agent_tag(name, agents), ui.dim(desc)))
-            print("  %s %s" % (ui.dim("workspace:"), event.get("root")))
+                say("  %s  %s" % (ui.agent_tag(name, agents), ui.dim(desc)))
+            say("  %s %s" % (ui.dim("workspace:"), event.get("root")))
             if event.get("gate"):
-                print("  %s %s" % (ui.dim("gate:     "), event["gate"]))
-            print("  %s %s goes first, up to %d rounds"
+                say("  %s %s" % (ui.dim("gate:     "), event["gate"]))
+            say("  %s %s goes first, up to %d rounds"
                   % (ui.dim("order:    "), (event.get("order") or ["?"])[0], event.get("max_rounds", 0)))
-            print(ui.rule())
+            say(ui.rule())
         elif kind == "turn_start":
-            print("\n%s %s %s" % (
+            say("\n%s %s %s" % (
                 ui.dim("round %d" % event["round"]),
                 ui.agent_tag(event["agent"], agents),
                 ui.dim("(%s, %s) thinking..." % (event.get("role", ""), event.get("backend", ""))),
             ))
         elif kind == "turn_done":
-            print("  %s %s  %s" % (
+            say("  %s %s  %s" % (
                 ui.agent_tag(event["agent"], agents),
                 ui.verdict_tag(event.get("verdict", "")),
                 ui.dim("state %s%s" % (str(event.get("digest", ""))[:8],
@@ -64,40 +69,40 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
                 msg = event["message"].strip()
                 if len(msg) > PREVIEW_CHARS:
                     msg = msg[:PREVIEW_CHARS].rstrip() + " …"
-                print(ui.wrap(msg))
+                say(ui.wrap(msg))
             if event.get("ingest") and event["ingest"] != "no change to open issues":
-                print("     " + ui.dim(event["ingest"]))
+                say("     " + ui.dim(event["ingest"]))
             for note in event.get("notes") or []:
-                print("     " + ui.yellow("note: " + note))
+                say("     " + ui.yellow("note: " + note))
         elif kind == "turn_error":
-            print("  " + ui.red("error: " + str(event.get("error"))[:400]))
+            say("  " + ui.red("error: " + str(event.get("error"))[:400]))
         elif kind == "patches":
             for line in event.get("log") or []:
-                print("     " + ui.dim("fs: " + line))
+                say("     " + ui.dim("fs: " + line))
         elif kind == "gate_start":
-            print("     " + ui.dim("running gate: %s" % event.get("command")))
+            say("     " + ui.dim("running gate: %s" % event.get("command")))
         elif kind == "gate_done":
-            print("     " + (ui.green("gate passed") if event.get("ok") else ui.red("gate failed (exit %s)" % event.get("exit_code"))))
+            say("     " + (ui.green("gate passed") if event.get("ok") else ui.red("gate failed (exit %s)" % event.get("exit_code"))))
         elif kind == "decision":
-            print("  " + ui.yellow("→ %s: %s" % (event.get("decision"), event.get("reason"))))
+            say("  " + ui.yellow("→ %s: %s" % (event.get("decision"), event.get("reason"))))
         elif kind == "arbitration_start":
-            print("\n" + ui.bold(ui.yellow("ARBITRATION")) + " on %s — %s" % (event.get("issue"), event.get("title")))
+            say("\n" + ui.bold(ui.yellow("ARBITRATION")) + " on %s — %s" % (event.get("issue"), event.get("title")))
         elif kind == "arbitration_done":
-            print("  " + ui.yellow("ruling by %s: %s" % (event.get("decider"), str(event.get("ruling"))[:200])))
+            say("  " + ui.yellow("ruling by %s: %s" % (event.get("decider"), str(event.get("ruling"))[:200])))
         elif kind == "commit":
-            print("  " + (ui.green("committed") if event.get("ok") else ui.dim("commit skipped: " + str(event.get("output"))[:120])))
+            say("  " + (ui.green("committed") if event.get("ok") else ui.dim("commit skipped: " + str(event.get("output"))[:120])))
         elif kind == "session_end":
-            print("\n" + ui.rule())
+            say("\n" + ui.rule())
             status = event.get("status")
             if status == STATUS_CONSENSUS:
-                print(ui.green(ui.bold("BOTH AGENTS SIGNED OFF")) + "  " + ui.dim(str(event.get("reason"))))
+                say(ui.green(ui.bold("BOTH AGENTS SIGNED OFF")) + "  " + ui.dim(str(event.get("reason"))))
             else:
-                print(ui.yellow(ui.bold(str(status).upper())) + "  " + str(event.get("reason")))
-            print("%s %d   %s %s" % (ui.dim("rounds:"), event.get("rounds", 0),
+                say(ui.yellow(ui.bold(str(status).upper())) + "  " + str(event.get("reason")))
+            say("%s %d   %s %s" % (ui.dim("rounds:"), event.get("rounds", 0),
                                      ui.dim("state:"), str(event.get("digest", ""))[:8]))
             if event.get("report"):
-                print(ui.dim("report: " + event["report"]))
-            print(ui.rule())
+                say(ui.dim("report: " + event["report"]))
+            say(ui.rule())
 
     return report
 
@@ -530,6 +535,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    # Sessions are long and mostly waiting on an agent. Piped or redirected runs
+    # block-buffer by default, which makes a working session look hung.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):  # pragma: no cover - very old interpreters
+        pass
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):

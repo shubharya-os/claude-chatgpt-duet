@@ -153,3 +153,20 @@ def test_each_agent_sees_the_peers_actual_words(tmp_path):
     assert "that is wrong" in claude_second_prompt          # gpt's message, verbatim
     assert "needs-tests" in claude_second_prompt            # and the open issue
     assert "add a test that runs the CLI" in claude_second_prompt
+
+
+def test_progress_is_visible_while_a_session_runs(tmp_path):
+    """A piped run must stream, not block-buffer: a long session that prints
+    nothing until it ends is indistinguishable from a hung one."""
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "duet", "demo", "-C", str(tmp_path), "--quiet"],
+        capture_output=True, text=True, timeout=120,
+        env={"PATH": "/usr/bin:/bin", "NO_COLOR": "1",
+             "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+    )
+    assert proc.returncode == 0
+    assert "BOTH AGENTS SIGNED OFF" in proc.stdout
+    assert "round 1" in proc.stdout          # per-turn progress reached the pipe
