@@ -92,6 +92,10 @@ class Orchestrator:
                     model=spec.model,
                     config=spec.options,
                 )
+        if config.gate:
+            # An agent that cannot run the gate is reviewing on hearsay.
+            for adapter in self.adapters.values():
+                adapter.allow_gate(config.gate)
 
     # -- plumbing ---------------------------------------------------------
     def emit(self, kind: str, **payload: Any) -> None:

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from duet import __version__, ui
 from duet.adapters import REGISTRY
@@ -470,6 +470,198 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# verify: does the last sign-off still describe this workspace?
+# --------------------------------------------------------------------------
+VERIFY_OK = 0        # signed state still present, gate still green
+VERIFY_STALE = 1     # a sign-off exists but no longer holds
+VERIFY_NOTHING = 2   # nothing to verify against (no session, or none recorded)
+
+
+def _session_state(path: Path) -> Optional[Dict[str, Any]]:
+    """The saved state of one session, or None if it never wrote one."""
+    try:
+        return json.loads((path / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _last_recorded_session(root: str) -> Tuple[Optional[Path], Optional[Dict[str, Any]], List[str]]:
+    """The newest session that actually saved state, plus the ones skipped.
+
+    A session killed before its first save leaves a directory with nothing but
+    events in it. There is no sign-off in such a directory to check, so verify
+    walks back to the newest one that has a state file and says which it used.
+    """
+    skipped: List[str] = []
+    for path in reversed(_sessions(root)):
+        data = _session_state(path)
+        if data is not None:
+            return path, data, skipped
+        skipped.append(path.name)
+    return None, None, skipped
+
+
+def _signed_state(data: Dict[str, Any]) -> Tuple[str, Dict[str, Dict[str, Any]], str]:
+    """The state id both agents signed, the per-agent sign-offs, and why not.
+
+    Returns ("", signoffs, reason) unless every agent signed off on one and the
+    same digest — a single DONE is not a sign-off, and two DONEs against
+    different states are not either.
+    """
+    state = data.get("state") or {}
+    signoffs = {k: v for k, v in (state.get("signoffs") or {}).items() if isinstance(v, dict)}
+    agents = list(state.get("agents") or [])
+    if not agents:
+        agents = [a.get("name") for a in (data.get("config") or {}).get("agents") or []]
+    missing = [a for a in agents if a not in signoffs]
+    if not signoffs and not agents:
+        return "", signoffs, "the session recorded no sign-off"
+    if not signoffs or missing:
+        return "", signoffs, "%s never signed off" % ", ".join(missing or agents)
+    digests = {str(s.get("digest") or "") for s in signoffs.values()}
+    if len(digests) > 1:
+        detail = ", ".join("%s %s" % (a, str(s.get("digest") or "?")[:8]) for a, s in sorted(signoffs.items()))
+        return "", signoffs, "the agents signed off on different states (%s)" % detail
+    only = digests.pop()
+    if not only:
+        return "", signoffs, "the recorded sign-off has no state id"
+    return only, signoffs, ""
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    from duet.workspace import Workspace
+
+    root = str(Path(args.root).expanduser().resolve())
+    as_json = getattr(args, "json", False)
+    out: Dict[str, Any] = {"kind": "verify", "root": root}
+
+    def finish(code: int, reason: str) -> int:
+        if as_json:
+            out["reason"] = reason
+            out["ok"] = code == VERIFY_OK
+            out["exit_code"] = code
+            print(json.dumps(out, default=str), flush=True)
+        return code
+
+    sessions = _sessions(root)
+    skipped: List[str] = []
+    if getattr(args, "session", None):
+        match = [p for p in sessions if p.name == args.session]
+        out["session"] = args.session
+        if not match:
+            if not as_json:
+                print(ui.red("no session %r in %s" % (args.session, Path(root) / ".duet" / "sessions")))
+            return finish(VERIFY_NOTHING, "no such session")
+        path = match[0]
+        data = _session_state(path)
+        if data is None:
+            if not as_json:
+                print(ui.yellow("session %s saved no state.json — there is no sign-off in it to check" % path.name))
+            return finish(VERIFY_NOTHING, "session recorded no state")
+    else:
+        path, data, skipped = _last_recorded_session(root)
+
+    if data is None or path is None:
+        where = Path(root) / ".duet" / "sessions"
+        if not as_json:
+            if skipped:
+                print(ui.yellow("no session here recorded a sign-off") +
+                      ui.dim(" (%d session dir(s) saved no state.json)" % len(skipped)))
+            else:
+                print("no sessions yet in %s" % where)
+            print(ui.dim("nothing has been signed off in this workspace — run ")
+                  + ui.bold('duet run "..."') + ui.dim(" first."))
+        out["session"] = None
+        return finish(VERIFY_NOTHING, "no session has recorded a sign-off here")
+
+    signed, signoffs, why_not = _signed_state(data)
+    cfg_data = data.get("config") or {}
+    result = data.get("result") or {}
+    gate_cmd = args.gate if getattr(args, "gate", None) is not None else (cfg_data.get("gate") or "")
+    try:
+        timeout = int(cfg_data.get("gate_timeout") or 900)
+    except (TypeError, ValueError):
+        timeout = 900
+
+    ws = Workspace(root, gate=gate_cmd or None, gate_timeout=timeout)
+    # Digest first, gate second: a gate is free to write files (coverage data,
+    # build output), and hashing after it ran would compare the signed state
+    # against a workspace the gate itself had already changed.
+    now = ws.digest()
+    matches = bool(signed) and signed == now
+    gate = ws.run_gate()
+
+    out.update(
+        session=path.name,
+        outcome=result.get("status") or "incomplete",
+        signed_digest=signed or None,
+        signoffs={a: {"round": s.get("round"), "digest": s.get("digest")} for a, s in sorted(signoffs.items())},
+        current_digest=now,
+        match=matches,
+        skipped_sessions=skipped,
+        gate={
+            "command": gate.command,
+            "skipped": gate.skipped,
+            "ok": gate.ok,
+            "exit_code": gate.exit_code,
+        },
+    )
+
+    if not as_json:
+        print(ui.bold("duet verify") + "  " + ui.dim(root))
+        if skipped:
+            print(ui.dim("  (skipped %s — saved no state.json)" % ", ".join(skipped)))
+        print("  %s %s  %s" % (ui.dim("session:  "), path.name,
+                               ui.dim("outcome: %s" % (result.get("status") or "incomplete"))))
+        if signed:
+            who = ", ".join("%s r%s" % (a, s.get("round", "?")) for a, s in sorted(signoffs.items()))
+            print("  %s %s  %s" % (ui.dim("signed:   "), signed, ui.dim("(%s)" % who)))
+        else:
+            print("  %s %s" % (ui.dim("signed:   "), ui.yellow("none — " + why_not)))
+        print("  %s %s" % (ui.dim("now:      "), now))
+        print("  %s %s" % (ui.dim("match:    "),
+                           ui.green("yes") if matches else ui.red("no") if signed else ui.yellow("n/a")))
+        if gate.skipped:
+            print("  %s %s" % (ui.dim("gate:     "), ui.yellow("none recorded for this session")
+                              + ui.dim(" — re-run with --gate \"...\" to check one")))
+        else:
+            print("  %s %s  %s" % (ui.dim("gate:     "), gate.command,
+                                   ui.green("passed") if gate.ok else ui.red("FAILED (exit %d)" % gate.exit_code)))
+        print()
+
+    if not signed:
+        if not as_json:
+            print(ui.red("that session never produced a double sign-off") + " — " + why_not + ".")
+            print(ui.dim("nothing here was agreed, so there is nothing to still hold."))
+        return finish(VERIFY_STALE, why_not)
+
+    problems: List[str] = []
+    if not matches:
+        problems.append("the workspace has changed since sign-off")
+    if not gate.ok:
+        problems.append("the acceptance gate no longer passes")
+
+    if not problems:
+        if not as_json:
+            print(ui.green(ui.bold("the sign-off still holds.")) + " " +
+                  ("gate re-run and green." if not gate.skipped else "no gate was recorded, so none was re-run."))
+        return finish(VERIFY_OK, "sign-off still holds")
+
+    if not as_json:
+        print(ui.red(ui.bold("the sign-off no longer holds.")))
+        for line in problems:
+            print("  " + ui.red("✗ ") + line)
+        if not matches:
+            print(ui.dim("  the state both agents approved was %s; this workspace is %s." % (signed, now)))
+            print(ui.dim("  see what changed with: ") + ui.bold("git diff") +
+                  ui.dim("   then re-run: ") + ui.bold('duet run "..."'))
+        if not gate.ok and not gate.skipped:
+            print()
+            print(gate.render(2000))
+    return finish(VERIFY_STALE, "; ".join(problems))
+
+
+# --------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="duet",
@@ -531,6 +723,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("session", nargs="?", help="session id")
     p_report.add_argument("--transcript", action="store_true", help="print the full transcript instead")
     p_report.set_defaults(func=cmd_report)
+
+    p_verify = sub.add_parser(
+        "verify",
+        help="re-run the gate and check the last sign-off still describes this workspace",
+    )
+    common(p_verify)
+    p_verify.add_argument("session", nargs="?", help="session id (default: the last one that saved state)")
+    p_verify.add_argument("--gate", help="check against this command instead of the one the session recorded")
+    p_verify.set_defaults(func=cmd_verify)
 
     return parser
 

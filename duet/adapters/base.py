@@ -51,6 +51,15 @@ class Adapter:
     def send(self, prompt: str, system: str = "", round_no: int = 0) -> AgentReply:
         raise NotImplementedError
 
+    def allow_gate(self, gate: str) -> None:
+        """Let this agent run the acceptance gate itself, if it needs permission.
+
+        An agent that cannot run the gate is taking the harness's word for it,
+        which is exactly the second-hand knowledge this project exists to avoid.
+        Default: nothing to do.
+        """
+        return None
+
     @classmethod
     def probe(cls, config: Optional[Dict[str, Any]] = None) -> Probe:
         return Probe(ok=False, detail="no probe implemented for %s" % cls.backend)
