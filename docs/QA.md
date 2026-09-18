@@ -21,6 +21,8 @@ evidence and is labelled as such.
 | orchestration | happy path, lone-yes, gate veto, arbitration, missing envelope, patch escape, backend outage, either side leading, peer words reaching the peer verbatim |
 | adapters | exact flags passed to `claude` and `codex`, session resume, stream-vs-object output, plain-text fallback, signed-out detection, no inherited stdin, last-message file preferred over scraped stdout |
 | plumbing | session files written; piped runs stream instead of block-buffering |
+| pairing | every alias resolves; order decides who leads; two of the same agent get distinct names; models pinned per side; a bad pair explains itself |
+| the skill | installs, is idempotent, refuses to clobber an edited copy without `--force`, and carries the frontmatter Claude Code needs to see it |
 
 ## Live runs
 
@@ -126,6 +128,15 @@ differently and catches what you did not.
 4. **Symlinks were invisible to the state id.** `tracked_files()` skipped them, so
    retargeting a symlink changed what the project did without changing the id. They
    are now hashed by their target, and never followed.
+
+## Install paths checked live
+
+| path | result |
+|---|---|
+| `pip install git+https://github.com/shubharya-os/claude-chatgpt-duet` | works from a bare venv; `duet` on PATH; the skill ships inside the wheel |
+| `pip install .` from a clone | works down to pip 21.2 / setuptools 58 / Python 3.9 |
+| `pip install -e .` | needs pip ≥ 21.3 and setuptools ≥ 61; a `setup.py` shim covers the legacy path, and CI asserts a plain install yields a working command |
+| `python3 -m duet` | always equivalent, no PATH needed |
 
 ## Known gaps
 
