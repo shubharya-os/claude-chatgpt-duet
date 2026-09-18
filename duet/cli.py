@@ -1404,8 +1404,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()
-        print("\n" + ui.dim("first time? ") + ui.bold("duet login") + ui.dim(" → ")
-              + ui.bold("duet doctor") + ui.dim(" → ") + ui.bold("duet demo"))
+        print("\n" + ui.dim("first time?  ") + ui.bold("duet login") + ui.dim("  →  ")
+              + ui.bold("duet skill install") + ui.dim("  →  then type ")
+              + ui.bold("/duet") + ui.dim(" in Claude Code or Codex"))
+        print(ui.dim("not sure it works?  ") + ui.bold("duet demo")
+              + ui.dim("  runs the whole loop offline, no keys, no network"))
         return 0
     try:
         return int(args.func(args))
