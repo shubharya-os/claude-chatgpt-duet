@@ -57,6 +57,14 @@ class CodexCliAdapter(Adapter):
         self.timeout = int(self.config.get("timeout", 1800))
         self.sandbox = str(self.config.get("sandbox", "workspace-write"))
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
+        # `codex exec resume --last` looked like free continuity and was not: with
+        # a prompt argument and a non-tty stdin, codex decides the real prompt is
+        # coming from stdin, prints "Reading additional input from stdin...", and
+        # returns no final message. It cost a turn in a live session. Every prompt
+        # duet builds is self-contained — task, diff, open issues, the peer's own
+        # words, gate output — so a fresh session loses context the agent did not
+        # need, and buys back a failure mode. Opt back in if you want it.
+        self.use_resume = bool(self.config.get("use_resume", False))
         self.turns = 0
 
     def read_only(self) -> str:
@@ -86,12 +94,16 @@ class CodexCliAdapter(Adapter):
         os.close(handle)
         try:
             attempts: List[List[str]] = []
-            if self.turns:
+            if self.turns and self.use_resume:
                 attempts.append(self._base(last_path) + ["resume", "--last", full])
             attempts.append(self._base(last_path) + [full])
 
             last_error = ""
-            for args in attempts:
+            blip_retried = False
+            index = 0
+            while index < len(attempts):
+                args = attempts[index]
+                index += 1
                 try:
                     proc = subprocess.run(
                         args,
@@ -115,6 +127,7 @@ class CodexCliAdapter(Adapter):
 
                 stdout = (proc.stdout or "").strip()
                 combined = (stdout + "\n" + (proc.stderr or "")).strip()
+
                 if "not logged in" in combined.lower():
                     # Confirm it before believing it. A blip that happens to say
                     # this once cost a whole round in a real session, and the
@@ -127,6 +140,9 @@ class CodexCliAdapter(Adapter):
                     last_error = ("codex reported a sign-in problem, but `codex login "
                                   "status` says %s. Treating it as transient: %s"
                                   % (detail, combined[:300]))
+                    if not blip_retried:
+                        blip_retried = True
+                        attempts.append(args)      # one more go at the same call
                     continue
 
                 final = ""

@@ -257,7 +257,7 @@ def test_openai_state_round_trips(monkeypatch):
 
 
 # -- Codex CLI -------------------------------------------------------------
-def test_codex_adapter_passes_sandbox_and_resumes(tmp_path, monkeypatch):
+def test_codex_adapter_passes_sandbox_and_workdir(tmp_path, monkeypatch):
     dump = tmp_path / "args.txt"
     monkeypatch.setenv("ARGDUMP", str(dump))
     agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
@@ -271,10 +271,6 @@ def test_codex_adapter_passes_sandbox_and_resumes(tmp_path, monkeypatch):
     dumped = dump.read_text()          # the prompt spans lines; check the whole dump
     assert "you are gpt" in dumped and "build it" in dumped
 
-    agent.send("next")
-    args = dump.read_text().splitlines()
-    assert "resume" in args and "--last" in args
-
 
 def test_codex_adapter_falls_back_when_resume_is_unsupported(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGDUMP", str(tmp_path / "args.txt"))
@@ -283,6 +279,7 @@ def test_codex_adapter_falls_back_when_resume_is_unsupported(tmp_path, monkeypat
 for a in "$@"; do if [ "$a" = "resume" ]; then echo "unknown subcommand" >&2; exit 2; fi; done
 echo "fresh run ok"
 ''')
+    agent.use_resume = True
     agent.turns = 1                      # pretend a session exists
     reply = agent.send("go")
     assert reply.ok and "fresh run ok" in reply.text
@@ -395,7 +392,6 @@ echo "Not logged in" >&2; exit 1
         os.path.exists("/tmp/duet-blip-done") and os.unlink("/tmp/duet-blip-done")
     except OSError:
         pass
-    agent.turns = 1                       # so there are two attempts to make
     reply = agent.send("go")
     try:
         os.unlink("/tmp/duet-blip-done")
@@ -410,3 +406,44 @@ def test_a_real_sign_out_is_still_reported(tmp_path):
     agent.bin = fake_bin(tmp_path, "codex", 'echo "Not logged in" >&2; exit 1')
     reply = agent.send("go")
     assert not reply.ok and "codex login" in reply.error
+
+
+def test_codex_does_not_reach_for_resume_by_default(tmp_path, monkeypatch):
+    """`codex exec resume --last` with a prompt argument and a non-tty stdin makes
+    codex read the prompt from stdin instead, print "Reading additional input from
+    stdin..." and return nothing. That cost a real turn, so continuity is opt-in."""
+    dump = tmp_path / "args.txt"
+    monkeypatch.setenv("ARGDUMP", str(dump))
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", r'''
+out=""
+args="$@"
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; fi
+  shift
+done
+printf '%s' "$args" > "$ARGDUMP"
+printf '%s' '{"message":"ok","verdict":"DONE"}' > "$out"
+''')
+    agent.send("turn one")
+    agent.send("turn two")
+    assert "resume" not in dump.read_text()
+
+
+def test_codex_resume_can_be_switched_back_on(tmp_path, monkeypatch):
+    dump = tmp_path / "args.txt"
+    monkeypatch.setenv("ARGDUMP", str(dump))
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path), config={"use_resume": True})
+    agent.bin = fake_bin(tmp_path, "codex", r'''
+out=""
+args="$@"
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; fi
+  shift
+done
+printf '%s' "$args" > "$ARGDUMP"
+printf '%s' '{"message":"ok","verdict":"DONE"}' > "$out"
+''')
+    agent.send("turn one")
+    agent.send("turn two")
+    assert "resume" in dump.read_text()
