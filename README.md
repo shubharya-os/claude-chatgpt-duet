@@ -148,6 +148,7 @@ And the rest of the commands:
 | command | what it does |
 |---|---|
 | `duet run "..."` | run a session (see the flags above) |
+| `duet review` | one agent, one pass over the working-tree diff — a second opinion, no debate |
 | `duet login` | sign both sides in (or `duet login claude` for one) |
 | `duet demo` | the full loop, scripted peers, no keys, no network |
 | `duet doctor` | real login check, with the exact fix per side |
@@ -155,6 +156,45 @@ And the rest of the commands:
 | `duet sessions` | every session in this workspace |
 | `duet report` | the last session's report (`--transcript` for everything both of them said) |
 | `duet verify` | re-run the gate now and check the last sign-off still describes this workspace |
+
+`duet review` is the cheap way in: one command, one agent call, no loop. It takes the
+working-tree diff, the contents of any new files git has not seen, the task the change
+was meant to do, and — with `--gate` — the output of a command run against it, and asks
+a single agent for findings.
+
+```
+duet review "port the CSV loader to streaming" --gate "pytest -q"
+  reviewer:  chatgpt  ChatGPT (Codex) (codex-cli), sandbox read-only
+  task:      from the command line
+  gate:      pytest -q  passed
+
+blocker (1)
+  [no-empty-csv-case] an empty CSV raises IndexError
+      rows[0] is read before the emptiness check. Return [] when there are no rows.
+
+minor (1)
+  [unused-import] `os` is imported and unused
+
+2 findings (1 blocker, 1 minor)
+blocking: this change should not ship as it is.
+```
+
+It exits `1` if any blocker or major finding was raised, `0` if not, and `2` when the
+review cannot be trusted — a backend error, a reply with no envelope, an unknown agent,
+or a reviewer that edited the tree it was reviewing. That last one is checked by
+hashing the workspace either side of the call, not by asking. The reviewer defaults to
+whichever agent does *not* normally lead, so it is the second opinion rather than the
+same one twice; `--reviewer NAME` picks explicitly, `--pair A+B` chooses the two agents,
+and with no task argument it uses the task from the last session recorded in this
+workspace. `--json` prints findings, counts, gate result and exit code as one object.
+
+The exit code answers one question — did anyone raise something blocking — so a failing
+`--gate` does not by itself make it `1`. It is not hidden either: the failure is printed
+again next to the verdict when the reviewer raised nothing blocking, so a clean-looking
+review never buries a red gate.
+
+It is not a session: nothing is written to `.duet/`, nothing is debated, and no one
+signs off. When you want the argument rather than the opinion, use `duet run`.
 
 `duet verify` is the one to run later — on a fresh clone, in CI, or a month after the
 session. It re-computes the workspace state id, compares it with the one both agents
@@ -369,7 +409,7 @@ duet now grants Bash for the gate's own executables and nothing else.
 
 ```bash
 pip install -e . pytest   # editable needs pip >= 21.3 and setuptools >= 61
-pytest -q                 # 57 tests, no keys and no network required
+pytest -q                 # 143 tests, no keys and no network required
 duet demo                 # the orchestrator end to end against scripted peers
 ```
 

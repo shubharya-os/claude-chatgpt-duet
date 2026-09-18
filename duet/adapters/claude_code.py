@@ -73,6 +73,16 @@ class ClaudeCodeAdapter(Adapter):
         self.permission_mode = self.config.get("permission_mode", "acceptEdits")
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
         self.allowed_tools: List[str] = list(self.config.get("allowed_tools") or [])
+        self.disallowed_tools: List[str] = list(self.config.get("disallowed_tools") or [])
+
+    WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+    def read_only(self) -> str:
+        """Deny the editing tools outright, rather than trusting the prompt."""
+        for tool in self.WRITE_TOOLS:
+            if tool not in self.disallowed_tools:
+                self.disallowed_tools.append(tool)
+        return "edit tools denied (%s)" % ", ".join(self.WRITE_TOOLS)
 
     def _command(self, prompt: str, system: str) -> List[str]:
         cmd = [self.bin, "-p", prompt, "--output-format", "json"]
@@ -88,6 +98,8 @@ class ClaudeCodeAdapter(Adapter):
             cmd += ["--resume", self.session_id]
         if self.allowed_tools:
             cmd += ["--allowedTools", " ".join(self.allowed_tools)]
+        if self.disallowed_tools:
+            cmd += ["--disallowedTools", " ".join(self.disallowed_tools)]
         cmd += self.extra_args
         return cmd
 

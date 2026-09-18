@@ -7,10 +7,11 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from duet import __version__, ui
+from duet import __version__, prompts, ui
 from duet.adapters import REGISTRY
+from duet.adapters import build as build_adapter
 from duet.adapters.base import Adapter
 from duet.config import (
     BACKEND_ALIASES,
@@ -26,6 +27,7 @@ from duet.config import (
     save_config,
 )
 from duet.orchestrator import Orchestrator, STATUS_CONSENSUS
+from duet.protocol import BLOCKING_SEVERITIES, SEVERITIES, parse_envelope
 
 PREVIEW_CHARS = 700
 
@@ -143,17 +145,19 @@ def build_config(args: argparse.Namespace) -> Config:
                 % (name, chosen, ", ".join(cfg.agent_names))
             )
 
-    if args.gate is not None:
+    # Read with getattr: `duet review` shares this builder but defines only the
+    # flags it actually offers.
+    if getattr(args, "gate", None) is not None:
         cfg.gate = args.gate
-    if args.rounds is not None:
+    if getattr(args, "rounds", None) is not None:
         cfg.max_rounds = args.rounds
-    if args.max_debate is not None:
+    if getattr(args, "max_debate", None) is not None:
         cfg.max_debate = args.max_debate
-    if args.start:
+    if getattr(args, "start", ""):
         cfg.start = args.start
-    if args.decider:
+    if getattr(args, "decider", ""):
         cfg.decider = args.decider
-    if args.swap is not None:
+    if getattr(args, "swap", None) is not None:
         cfg.swap_every = args.swap
     if getattr(args, "commit", False):
         cfg.commit = True
@@ -675,6 +679,356 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# review: one agent, one pass over the working-tree diff, no debate
+# --------------------------------------------------------------------------
+REVIEW_CLEAN = 0       # the reviewer raised nothing that blocks the change
+REVIEW_FINDINGS = 1    # at least one blocker or major finding
+REVIEW_FAILED = 2      # the review is not trustworthy: bad flags, backend error,
+                       # no envelope, or the reviewer edited the tree it reviewed
+
+# What Workspace.diff() says when there is nothing to look at.
+NOTHING_TO_REVIEW = ("(git: no changes against HEAD)", "(workspace is empty)")
+
+# One review is one agent call, so it can afford a far bigger view of the change
+# than a turn in a 12-round session can.
+REVIEW_DIFF_CHARS = 60000
+NEW_FILE_CHARS = 20000       # per untracked file
+NEW_FILE_BUDGET = 60000      # across all of them
+NEW_FILE_COUNT = 25
+# `GateResult.render` keeps the head and the tail and drops the middle. On a
+# failing test run the middle is the traceback — the one thing the reviewer was
+# given the gate output for. A single call can afford the whole thing.
+REVIEW_GATE_CHARS = 20000
+
+
+def _file_bodies(ws: Any, paths: Sequence[str]) -> Tuple[Dict[str, str], List[str], List[str]]:
+    """The contents of files that appear in no diff: (bodies, cut short, left out).
+
+    A change that is mostly new files — a new module and its tests, the most
+    ordinary shape there is — reaches a diff as a list of names and byte counts.
+    A reviewer given only that is reviewing a filename.
+    """
+    bodies: Dict[str, str] = {}
+    cut: List[str] = []
+    skipped: List[str] = []
+    budget = NEW_FILE_BUDGET
+    for rel in paths:
+        if len(bodies) >= NEW_FILE_COUNT or budget <= 0:
+            skipped.append(rel)
+            continue
+        allowed = min(NEW_FILE_CHARS, budget)
+        body = ws.read_or_none(rel, limit=allowed + 1)
+        if body is None:                  # unreadable, or gone since the scan
+            skipped.append(rel)
+            continue
+        if len(body) > allowed:
+            # Cut here and say so. A body that stops mid-definition with no
+            # marker is read as the whole file, which is how a reviewer comes to
+            # report a missing symbol that is right there on the next line.
+            body = body[:allowed] + "\n...[%s cut off at %d chars]..." % (rel, allowed)
+            cut.append(rel)
+        budget -= len(body)
+        bodies[rel] = body
+    return bodies, cut, skipped
+
+
+def _recorded_task(root: str) -> Tuple[str, str]:
+    """The task and acceptance text of the newest session that recorded one."""
+    for path in reversed(_sessions(root)):
+        data = _session_state(path)
+        if not data:
+            continue
+        cfg_data = data.get("config") or {}
+        task = str(cfg_data.get("task") or "").strip()
+        if task:
+            return task, str(cfg_data.get("acceptance") or "").strip()
+    return "", ""
+
+
+def _review_task(args: argparse.Namespace, root: str) -> Tuple[str, str, str]:
+    """(task, acceptance, where it came from).
+
+    A review with no task is still worth having, but a review that knows what the
+    change was *for* can say "this does not do it", which is the finding people
+    most want. So: take it from the command line, else from the last session
+    recorded in this workspace, else go without and say so.
+    """
+    if getattr(args, "file", None):
+        try:
+            text = Path(args.file).expanduser().read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ValueError("could not read --file %s: %s" % (args.file, exc))
+        return text, "", "--file %s" % args.file
+    text = " ".join(getattr(args, "task", None) or []).strip()
+    if text == "-":
+        return sys.stdin.read().strip(), "", "stdin"
+    if text:
+        return text, "", "the command line"
+    task, acceptance = _recorded_task(root)
+    if task:
+        return task, acceptance, "the last recorded session"
+    return "", "", ""
+
+
+def _pick_reviewer(cfg: Config, chosen: str) -> str:
+    """Who reviews: by default whoever does *not* normally lead."""
+    names = cfg.agent_names
+    if chosen:
+        if chosen not in names:
+            raise ValueError(
+                "--reviewer %r is not one of this pair: %s" % (chosen, ", ".join(names))
+            )
+        return chosen
+    order = cfg.order()
+    return order[1] if len(order) > 1 else order[0]
+
+
+def _render_findings(issues: List[Any]) -> List[str]:
+    lines: List[str] = []
+    for severity in SEVERITIES:
+        group = [i for i in issues if i.severity == severity]
+        if not group:
+            continue
+        colour = ui.red if severity in BLOCKING_SEVERITIES else ui.yellow
+        lines.append(colour(ui.bold("%s (%d)" % (severity, len(group)))))
+        for issue in group:
+            lines.append("  %s %s" % (ui.dim("[%s]" % issue.id), issue.title))
+            if issue.detail:
+                lines.append("      " + issue.detail.strip().replace("\n", "\n      "))
+        lines.append("")
+    return lines
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """A second opinion in one agent call: no loop, no consensus, no session."""
+    from duet.workspace import Workspace, changed_paths
+
+    as_json = getattr(args, "json", False)
+    # Seeded up front so every --json exit has the same shape, including the
+    # ones that fail before a reviewer is ever reached.
+    out: Dict[str, Any] = {
+        "kind": "review", "reviewed": False, "issues": [],
+        "counts": {s: 0 for s in SEVERITIES}, "notes": [],
+    }
+
+    def finish(code: int, error: str = "") -> int:
+        if as_json:
+            out["ok"] = code == REVIEW_CLEAN
+            out["exit_code"] = code
+            out["error"] = error or None
+            print(json.dumps(out, default=str), flush=True)
+        return code
+
+    def fail(message: str) -> int:
+        if not as_json:
+            print(ui.red("✗ ") + message)
+        return finish(REVIEW_FAILED, message)
+
+    # Everything that can reject the invocation, in one place: a misconfiguration
+    # must not escape as exit 1, which is this command's "blocking findings".
+    try:
+        cfg = build_config(args)
+        root = cfg.root
+        out["root"] = root
+        task, acceptance, task_source = _review_task(args, root)
+        reviewer = _pick_reviewer(cfg, getattr(args, "reviewer", "") or "")
+        spec = cfg.agent(reviewer)
+        adapter = build_adapter(
+            spec.backend, name=reviewer, cwd=root, model=spec.model, config=spec.options
+        )
+    except (SystemExit, ValueError) as exc:   # unknown pair or backend, bad --file
+        return fail(str(exc))
+
+    out.update(task=task, task_source=task_source or None,
+               reviewer=reviewer, backend=spec.backend, agent=adapter.describe())
+
+    ws = Workspace(root, gate=cfg.gate or None, gate_timeout=cfg.gate_timeout)
+    # The change is read before the gate runs. A gate is free to write files
+    # (coverage data, build output), and a view taken afterwards would show the
+    # reviewer artefacts nobody wrote.
+    change = ws.diff(limit=REVIEW_DIFF_CHARS)
+    is_git = ws.is_git_repo
+    # Two different kinds of incomplete, kept apart: the diff itself hit the
+    # character limit, or some new file did not fit. `truncated` is the union —
+    # it is what the reviewer is warned about — but the human is told which one
+    # actually happened, because "the change is larger than 60000 chars" printed
+    # over one unreadable filename sends the reader looking for the wrong thing.
+    diff_truncated = ws.TRIM_MARKER in change
+    truncated = diff_truncated
+    out.update(git=is_git, truncated=truncated)
+
+    if change.strip() in NOTHING_TO_REVIEW:
+        if not as_json:
+            print(ui.bold("duet review") + "  " + ui.dim(root))
+            print(ui.yellow("nothing to review") + " — " + (
+                "the working tree matches HEAD." if is_git else "the workspace is empty."))
+            print(ui.dim("make a change first, or point at another directory with -C."))
+        return finish(REVIEW_CLEAN)
+
+    # Untracked files are in no diff; in a workspace with no git at all, no file
+    # is. Either way the reviewer needs the text, not a listing of names.
+    unseen = ws.untracked_files() if is_git else [
+        p.relative_to(ws.root).as_posix() for p in ws.tracked_files()
+    ]
+    new_files, cut_files, skipped_files = _file_bodies(ws, unseen)
+    out["new_files"] = sorted(new_files)
+    if cut_files:
+        truncated = True
+        out["notes"].append("sent only the first %d chars of: %s"
+                            % (NEW_FILE_CHARS, ", ".join(cut_files[:10])))
+    if skipped_files:
+        truncated = True
+        out["notes"].append("not sent at all (too many, too large, or unreadable): %s"
+                            % ", ".join(skipped_files[:10]))
+    out["truncated"] = truncated
+
+    # The fingerprint is taken either side of duet's own gate run, so that the
+    # files the gate writes are known to be the gate's doing. The reviewer is
+    # granted the gate on purpose; it must not then be blamed for running it.
+    before_gate = ws.fingerprint()
+    gate = ws.run_gate()
+    after_gate = ws.fingerprint()
+    gate_touched = set(changed_paths(before_gate, after_gate))
+    out["gate"] = {
+        "command": gate.command,
+        "skipped": gate.skipped,
+        "ok": gate.ok,
+        "exit_code": gate.exit_code,
+    }
+
+    if cfg.gate:
+        # A reviewer that cannot re-run the gate is reviewing on hearsay.
+        adapter.allow_gate(cfg.gate)
+    # Asking in the prompt is not a control. Where the backend can enforce it,
+    # make the review read-only; either way the tree is hashed and checked below.
+    enforced = adapter.read_only()
+    out["read_only"] = enforced or None
+
+    prompt = prompts.review_prompt(
+        task=task,
+        acceptance=acceptance,
+        change_title=(
+            "THE CHANGE UNDER REVIEW (working tree against HEAD)"
+            if is_git
+            else "THE WORKSPACE UNDER REVIEW (not a git repo — file listing)"
+        ),
+        change=change,
+        gate_text="" if gate.skipped else gate.render(REVIEW_GATE_CHARS),
+        new_files=new_files,
+        truncated=truncated,
+    )
+    system = prompts.review_system_prompt(
+        name=reviewer,
+        display=adapter.display,
+        root=root,
+        edits_workspace=adapter.edits_workspace,
+    )
+
+    if not as_json:
+        print(ui.bold("duet review") + "  " + ui.dim(root))
+        print("  %s %s" % (ui.dim("reviewer: "), ui.agent_tag(reviewer, cfg.agent_names)
+                           + "  " + ui.dim(adapter.describe())
+                           + (ui.dim(", " + enforced) if enforced else "")))
+        print("  %s %s" % (ui.dim("task:     "),
+                           ui.dim("from %s" % task_source) if task_source
+                           else ui.yellow("none given — reviewing the change on its own terms")))
+        if new_files:
+            print("  %s %s" % (ui.dim("new files:"),
+                               ui.dim("%d included in full" % len(new_files))))
+        if not gate.skipped:
+            print("  %s %s  %s" % (ui.dim("gate:     "), gate.command,
+                                   ui.green("passed") if gate.ok
+                                   else ui.red("FAILED (exit %d)" % gate.exit_code)))
+        if diff_truncated:
+            print("  " + ui.yellow("the change is larger than %d chars and was cut short — "
+                                   "the reviewer is told so, but it is not seeing all of it"
+                                   % REVIEW_DIFF_CHARS))
+        elif truncated:
+            print("  " + ui.yellow("some of the new files did not fit — see the notes below; "
+                                   "the reviewer is told, but it is not seeing all of it"))
+        print(ui.dim("  reading the change..."), flush=True)
+
+    reply = adapter.send(prompt, system=system, round_no=1)
+    touched = [p for p in changed_paths(after_gate, ws.fingerprint()) if p not in gate_touched]
+
+    if not reply.ok and not reply.text.strip():
+        return fail("%s could not review this: %s" % (reviewer, reply.error))
+
+    env = parse_envelope(reply.text, agent=reviewer, round_no=1)
+    if reply.error:
+        # A reply that arrived alongside an error is a degraded reply. It has to
+        # reach the terminal too, not only --json.
+        env.notes.append("backend reported: %s" % reply.error)
+    out.update(
+        reviewed=True,
+        message=env.message,
+        summary=env.summary,
+        confidence=env.confidence,
+        issues=[i.to_dict() for i in env.issues],
+        counts={s: len([i for i in env.issues if i.severity == s]) for s in SEVERITIES},
+        workspace_changed=bool(touched),
+        workspace_changed_paths=touched,
+    )
+    out["notes"].extend(env.notes)
+
+    if not env.parse_ok:
+        # No envelope means no findings list — which is not the same as no
+        # findings. Saying "clean" here would be a lie with an exit code on it.
+        if not as_json:
+            print()
+            print(ui.wrap(env.message.strip()[:PREVIEW_CHARS]))
+            print()
+        return fail("%s replied without a JSON envelope, so nothing could be read back "
+                    "as a finding — and silence is not the same as approval. Re-run it."
+                    % reviewer)
+
+    blocking = [i for i in env.issues if i.severity in BLOCKING_SEVERITIES]
+
+    if not as_json:
+        print()
+        if env.message.strip() and not getattr(args, "quiet", False):
+            print(ui.wrap(env.message.strip()))
+            print()
+        for line in _render_findings(env.issues):
+            print(line)
+        if not env.issues:
+            print(ui.green(ui.bold("no findings.")) + " "
+                  + ui.dim("%s reviewed the change and raised nothing." % reviewer))
+        else:
+            counts = ", ".join("%d %s" % (out["counts"][s], s) for s in SEVERITIES if out["counts"][s])
+            print(("%s %s" % (ui.bold("%d finding%s" % (len(env.issues),
+                                                        "" if len(env.issues) == 1 else "s")),
+                              ui.dim("(%s)" % counts))))
+            if blocking:
+                print(ui.red("blocking: this change should not ship as it is."))
+            else:
+                print(ui.dim("nothing blocking — every finding is minor."))
+        if not gate.skipped and not gate.ok and not blocking:
+            # The exit code answers one question — did anyone raise something
+            # blocking — and a gate that failed is not an answer to it. But the
+            # gate line is printed before the review, and a long review buries
+            # it; a reader who scrolls to "no findings" and stops would take a
+            # red gate for a green one. So say it again where the verdict is.
+            print(ui.red("but the gate failed (exit %d): " % gate.exit_code)
+                  + ui.bold(gate.command)
+                  + ui.dim(" — that is a defect in this change whichever way the "
+                           "review went. Re-run it yourself."))
+        for note in out["notes"]:
+            print(ui.yellow("note: ") + note)
+
+    if touched:
+        # The findings may still be worth reading, but they no longer describe
+        # what is on disk, so this cannot exit as a clean or merely-noisy review.
+        # Files the gate itself wrote are excluded above; these are the
+        # reviewer's own.
+        return fail("%s modified the workspace while reviewing it (%s), so these findings "
+                    "no longer describe what is on disk. Check `git status` before "
+                    "trusting them." % (reviewer, ", ".join(touched[:8])))
+
+    return finish(REVIEW_FINDINGS if blocking else REVIEW_CLEAN)
+
+
+# --------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="duet",
@@ -741,6 +1095,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("session", nargs="?", help="session id")
     p_report.add_argument("--transcript", action="store_true", help="print the full transcript instead")
     p_report.set_defaults(func=cmd_report)
+
+    p_review = sub.add_parser(
+        "review",
+        help="one agent, one pass over the working-tree diff — a second opinion, no debate",
+    )
+    p_review.add_argument("task", nargs="*",
+                          help="what the change was meant to do (default: the last session's task)")
+    common(p_review)
+    p_review.add_argument("-f", "--file", help="read the task from a file")
+    p_review.add_argument("--reviewer", metavar="NAME",
+                          help="who reviews (default: the one that does not normally lead)")
+    p_review.add_argument("--pair", metavar="A+B",
+                          help="which two agents to choose the reviewer from (default: %s)" % DEFAULT_PAIR)
+    p_review.add_argument("--gate", metavar="CMD",
+                          help="run this first and show the reviewer its output, e.g. \"pytest -q\"")
+    p_review.set_defaults(func=cmd_review)
 
     p_verify = sub.add_parser(
         "verify",
