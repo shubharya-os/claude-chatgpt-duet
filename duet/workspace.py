@@ -133,20 +133,47 @@ class Workspace:
         return code == 0 and out.strip() == "true"
 
     def diff(self, limit: int = 12000) -> str:
-        """What the peer needs to review: the change, not the whole repo."""
-        if self.is_git_repo:
-            self._git("add", "-AN")
-            code, out = self._git("--no-pager", "diff", "--stat", "HEAD")
-            stat = out if code == 0 else ""
-            code, out = self._git("--no-pager", "diff", "HEAD")
-            if code == 0 and out.strip():
-                body = (stat + "\n" + out).strip()
-                if len(body) > limit:
-                    body = body[:limit] + "\n...[diff trimmed at %d chars]..." % limit
-                return body
-            if code == 0:
-                return "(git: no uncommitted changes against HEAD)"
-        return self.tree(limit=limit)
+        """What the peer needs to review: the change, not the whole repo.
+
+        This deliberately does not run `git add -AN` to make untracked files
+        show up in the diff. duet is a guest in someone's repository and
+        staging their files behind their back is not its business; new files
+        are listed separately instead.
+        """
+        if not self.is_git_repo:
+            return self.tree(limit=limit)
+
+        parts: List[str] = []
+        code, out = self._git("--no-pager", "diff", "--stat", "HEAD")
+        if code == 0 and out.strip():
+            parts.append(out.strip())
+        code, body = self._git("--no-pager", "diff", "HEAD")
+        if code == 0 and body.strip():
+            parts.append(body.strip())
+
+        code, status = self._git("status", "--porcelain", "--untracked-files=all")
+        if code == 0:
+            new_files = [
+                line[3:].strip() for line in status.splitlines() if line.startswith("??")
+            ]
+            if new_files:
+                listing = ["NEW FILES (untracked, not shown in the diff above):"]
+                for rel in new_files[:80]:
+                    try:
+                        size = (self.root / rel).stat().st_size
+                    except OSError:
+                        size = -1
+                    listing.append("  %8d  %s" % (size, rel))
+                if len(new_files) > 80:
+                    listing.append("  ...and %d more" % (len(new_files) - 80))
+                parts.append("\n".join(listing))
+
+        if not parts:
+            return "(git: no changes against HEAD)"
+        joined = "\n\n".join(parts)
+        if len(joined) > limit:
+            joined = joined[:limit] + "\n...[trimmed at %d chars]..." % limit
+        return joined
 
     def tree(self, limit: int = 12000, max_entries: int = 400) -> str:
         lines = []

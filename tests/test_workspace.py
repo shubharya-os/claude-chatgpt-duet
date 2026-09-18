@@ -45,3 +45,36 @@ def test_gate_result_reflects_the_command(tmp_path):
     failed = Workspace(str(tmp_path), gate="exit 3").run_gate()
     assert not failed.ok and failed.exit_code == 3
     assert Workspace(str(tmp_path)).run_gate().skipped
+
+
+def _git(tmp_path, *args):
+    import subprocess
+    return subprocess.run(["git", *args], cwd=str(tmp_path), capture_output=True, text=True)
+
+
+def test_diff_shows_new_files_without_staging_them(tmp_path):
+    """duet is a guest in someone's repo: it must not quietly stage their files
+    just to render a diff for the reviewer."""
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "tracked.txt").write_text("one\n")
+    _git(tmp_path, "add", "tracked.txt")
+    _git(tmp_path, "commit", "-qm", "initial")
+
+    (tmp_path / "tracked.txt").write_text("two\n")
+    (tmp_path / "brand_new.py").write_text("x = 1\n")
+
+    ws = Workspace(str(tmp_path))
+    out = ws.diff()
+    assert "two" in out                       # the edit is visible
+    assert "brand_new.py" in out              # and so is the new file
+
+    staged = _git(tmp_path, "diff", "--cached", "--name-only").stdout
+    assert "brand_new.py" not in staged       # but nothing was staged
+    assert staged.strip() == ""
+
+
+def test_diff_falls_back_to_a_listing_outside_a_repo(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    assert "a.py" in Workspace(str(tmp_path)).diff()
