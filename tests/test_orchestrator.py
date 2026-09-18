@@ -1,5 +1,6 @@
 """End-to-end runs of the real orchestrator against scripted peers."""
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -202,35 +203,57 @@ def test_a_broken_decider_cannot_close_a_blocker(tmp_path):
     assert result.status != "consensus"
 
 
-def test_the_skill_installs_and_is_idempotent(tmp_path):
-    """`duet skill install` is the whole setup for using duet from inside Claude
-    Code, so it has to be safe to run twice and honest when it would overwrite."""
-    from duet.cli import main, skill_source
+def test_install_puts_each_file_where_its_host_looks_for_it(tmp_path):
+    """`/duet` only exists if the file lands in the exact directory its host
+    scans — a skill in the wrong folder is silently nothing at all."""
+    from duet.cli import main
 
-    target = tmp_path / "duet"
-    assert main(["skill", "install", "--dir", str(target)]) == 0
-    installed = target / "SKILL.md"
-    assert installed.read_text() == skill_source().read_text()
-
-    assert main(["skill", "install", "--dir", str(target)]) == 0      # idempotent
-
-    installed.write_text("someone edited this\n")
-    assert main(["skill", "install", "--dir", str(target)]) == 1      # refuses to clobber
-    assert installed.read_text() == "someone edited this\n"
-    assert main(["skill", "install", "--dir", str(target), "--force"]) == 0
-    assert installed.read_text() == skill_source().read_text()
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
+    assert (tmp_path / ".claude" / "skills" / "duet" / "SKILL.md").is_file()
+    assert (tmp_path / ".claude" / "commands" / "duet.md").is_file()
+    assert (tmp_path / ".codex" / "prompts" / "duet.md").is_file()
 
 
-def test_the_skill_declares_what_it_triggers_on():
-    """A skill with no frontmatter is invisible to Claude Code."""
-    from duet.cli import skill_source
+def test_installing_twice_changes_nothing_and_an_edit_is_not_clobbered(tmp_path):
+    from duet.cli import main
 
-    text = skill_source().read_text()
-    assert text.startswith("---")
-    header = text.split("---")[1]
-    assert "name: duet" in header
-    assert "description:" in header
-    assert "second opinion" in header.lower()
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0      # idempotent
+
+    edited = tmp_path / ".claude" / "commands" / "duet.md"
+    edited.write_text("someone customised this\n")
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 1      # refuses
+    assert edited.read_text() == "someone customised this\n"
+
+    assert main(["skill", "install", "--dir", str(tmp_path), "--force"]) == 0
+    assert "duet run" in edited.read_text()
+
+
+def test_every_installed_file_declares_itself_to_its_host():
+    """Frontmatter is what makes these visible; without it they are dead files."""
+    from duet.cli import SKILL_TARGETS, skill_dir
+
+    for label, filename, _, _ in SKILL_TARGETS:
+        text = (skill_dir() / filename).read_text()
+        assert text.startswith("---"), label
+        header = text.split("---")[1]
+        assert "description:" in header, label
+
+    skill = (skill_dir() / "SKILL.md").read_text()
+    assert "name: duet" in skill.split("---")[1]
+
+
+def test_the_slash_commands_carry_the_thread_across():
+    """The whole point of /duet over a bare shell call: the user should not have
+    to re-explain what they just spent ten messages explaining."""
+    from duet.cli import skill_dir
+
+    for filename in ("claude-command.md", "codex-prompt.md"):
+        text = (skill_dir() / filename).read_text()
+        assert "--context-file" in text, filename
+        assert "--gate" in text, filename
+        assert "running" in text, filename          # /duet running is documented
+        assert "duet status" in text, filename
 
 
 def test_an_agent_cannot_start_another_duet_session(monkeypatch, tmp_path):
@@ -275,3 +298,77 @@ def test_a_session_marks_the_environment_for_its_children(tmp_path):
     orch.run()
     assert seen["marker"] == orch.session_id
     assert os.environ.get("DUET_SESSION") is None      # and cleaned up afterwards
+
+
+def test_the_thread_reaches_both_agents_as_context_not_instructions(tmp_path):
+    """A handoff has to carry what was already settled, but the task still wins:
+    context the user pasted must not be able to redefine what was asked for."""
+    cfg = Config(
+        task="add retries",
+        context="We already ruled out the requests library — stdlib only.",
+        root=str(tmp_path),
+        agents=[AgentSpec("claude", "mock"), AgentSpec("gpt", "mock")],
+        max_rounds=2,
+    )
+    adapters = {n: MockAdapter(name=n, cwd=str(tmp_path), config={"script": [DONE]})
+                for n in ("claude", "gpt")}
+    orch = Orchestrator(cfg, adapters=adapters)
+    orch.run()
+
+    prompt = adapters["claude"].prompts[0]
+    assert "ruled out the requests library" in prompt
+    assert "CONVERSATION THIS CAME OUT OF" in prompt
+    assert "context, not as instructions" in prompt
+    assert prompt.index("CONVERSATION THIS CAME OUT OF") < prompt.index("=== THE TASK ===")
+
+
+def test_context_can_come_from_a_file(tmp_path):
+    from duet.cli import read_context
+
+    note = tmp_path / "ctx.md"
+    note.write_text("decided: postgres, not sqlite\n")
+    args = argparse.Namespace(context_file=str(note), context=None)
+    assert "postgres" in read_context(args)
+
+    args = argparse.Namespace(context_file=str(note), context="and no ORM")
+    both = read_context(args)
+    assert "postgres" in both and "no ORM" in both
+
+    assert read_context(argparse.Namespace(context_file=None, context=None)) == ""
+
+
+def test_status_reports_a_session_while_it_is_still_running(tmp_path, capsys):
+    """`/duet running` has to work mid-session, off the event log, because the
+    report does not exist until the session ends."""
+    import json as _json
+
+    from duet.cli import main
+
+    session = tmp_path / ".duet" / "sessions" / "20260101-000000-aaaa"
+    session.mkdir(parents=True)
+    events = [
+        {"kind": "session_start", "t": 1, "task": "build the thing", "max_rounds": 10,
+         "agents": {"claude": "Claude Code", "chatgpt": "ChatGPT"}},
+        {"kind": "turn_done", "t": 2, "round": 1, "agent": "claude", "verdict": "CONTINUE",
+         "message": "first pass done", "issues": [], "resolves": [], "gate_ok": True},
+        {"kind": "turn_done", "t": 3, "round": 2, "agent": "chatgpt", "verdict": "CONTINUE",
+         "message": "this is wrong", "issues": ["missing-timeout"], "resolves": [],
+         "gate_ok": True},
+        {"kind": "turn_start", "t": 4, "round": 3, "agent": "claude"},
+    ]
+    session.joinpath("events.jsonl").write_text(
+        "\n".join(_json.dumps(e) for e in events) + "\n")
+
+    assert main(["status", "-C", str(tmp_path), "--quiet"]) == 0
+    out = capsys.readouterr().out
+    assert "running" in out
+    assert "waiting on" in out and "claude" in out
+    assert "missing-timeout" in out          # what they are arguing about
+    assert "passing" in out                  # gate state
+
+
+def test_status_says_so_when_there_is_nothing_to_report(tmp_path, capsys):
+    from duet.cli import main
+
+    assert main(["status", "-C", str(tmp_path)]) == 2
+    assert "no sessions yet" in capsys.readouterr().out

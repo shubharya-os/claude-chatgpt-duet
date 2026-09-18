@@ -147,6 +147,7 @@ class Orchestrator:
         return prompts.turn_prompt(
             task=self.config.task,
             acceptance=self.config.acceptance,
+            context=self.config.context,
             round_no=round_no,
             max_rounds=self.config.max_rounds,
             role=self.role_of(agent, round_no),

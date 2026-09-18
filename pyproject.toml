@@ -24,7 +24,7 @@ duet = "duet.cli:main"
 include = ["duet*"]
 
 [tool.setuptools.package-data]
-duet = ["skill/SKILL.md"]
+duet = ["skill/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

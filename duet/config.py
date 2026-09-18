@@ -100,6 +100,7 @@ class AgentSpec:
 class Config:
     task: str = ""
     acceptance: str = ""
+    context: str = ""        # the conversation this task came out of
     root: str = "."
     agents: List[AgentSpec] = field(default_factory=list)
     start: str = ""

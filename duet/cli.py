@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -124,6 +125,29 @@ def read_task(args: argparse.Namespace) -> str:
     return task
 
 
+def read_context(args: argparse.Namespace) -> str:
+    """The conversation this task came out of, if the caller passed one.
+
+    `/duet` inside Claude Code or Codex is a handoff, not a fresh start: the
+    human has already been talking to one assistant. Carrying that across means
+    the pair does not re-ask what was settled ten messages ago.
+    """
+    parts: List[str] = []
+    path = getattr(args, "context_file", None)
+    if path:
+        if str(path) == "-":
+            parts.append(sys.stdin.read())
+        else:
+            try:
+                parts.append(Path(path).expanduser().read_text(encoding="utf-8"))
+            except OSError as exc:
+                raise SystemExit("could not read --context-file %s: %s" % (path, exc))
+    inline = getattr(args, "context", None)
+    if inline:
+        parts.append(str(inline))
+    return "\n\n".join(p.strip() for p in parts if p and p.strip())
+
+
 def build_config(args: argparse.Namespace) -> Config:
     root = str(Path(args.root).expanduser().resolve())
     load_env_file(root)
@@ -201,6 +225,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     cfg = build_config(args)
     cfg.task = task
+    cfg.context = read_context(args)
 
     problems = preflight(cfg)
     if problems:
@@ -404,49 +429,86 @@ def cmd_login(args: argparse.Namespace) -> int:
     return cmd_doctor(args) if not failures else 1
 
 
+def skill_dir() -> Path:
+    return Path(__file__).resolve().parent / "skill"
+
+
 def skill_source() -> Path:
-    return Path(__file__).resolve().parent / "skill" / "SKILL.md"
+    return skill_dir() / "SKILL.md"
+
+
+# Everything `duet skill install` places, and where each one has to land for its
+# host to find it. `/duet` only exists if the file is in the right directory.
+SKILL_TARGETS = [
+    ("Claude Code skill", "SKILL.md", Path(".claude") / "skills" / "duet" / "SKILL.md",
+     "so Claude Code can decide to use duet on its own"),
+    ("Claude Code /duet", "claude-command.md", Path(".claude") / "commands" / "duet.md",
+     "so you can type /duet in Claude Code"),
+    ("Codex /duet", "codex-prompt.md", Path(".codex") / "prompts" / "duet.md",
+     "so you can type /duet in Codex"),
+]
 
 
 def cmd_skill(args: argparse.Namespace) -> int:
-    """Install the Claude Code skill, so `duet` is reachable from inside Claude."""
-    source = skill_source()
-    if not source.is_file():
-        print(ui.red("the packaged skill is missing at %s" % source))
-        return 1
-
-    target_dir = Path(args.dir).expanduser() if args.dir else Path.home() / ".claude" / "skills" / "duet"
-    target = target_dir / "SKILL.md"
+    """Install `/duet` into Claude Code and Codex, plus the Claude Code skill."""
+    source_dir = skill_dir()
+    home = Path(args.dir).expanduser() if args.dir else Path.home()
 
     if args.action == "path":
-        print(source)
+        print(source_dir)
         return 0
     if args.action == "show":
-        print(source.read_text(encoding="utf-8"))
+        for label, filename, _, _ in SKILL_TARGETS:
+            print(ui.bold("--- %s (%s) ---" % (label, filename)))
+            print((source_dir / filename).read_text(encoding="utf-8"))
         return 0
 
-    if target.is_file() and not args.force:
-        existing = target.read_text(encoding="utf-8", errors="replace")
-        if existing == source.read_text(encoding="utf-8"):
-            print(ui.green("✓ ") + "already installed and up to date: %s" % target)
-            return 0
-        print(ui.yellow("a different version is already installed at %s" % target))
-        print(ui.dim("  re-install it with: ") + ui.bold("duet skill install --force"))
+    installed, skipped, failed = [], [], []
+    for label, filename, relative, why in SKILL_TARGETS:
+        source = source_dir / filename
+        target = home / relative
+        if not source.is_file():
+            failed.append((label, target, "packaged file missing: %s" % source))
+            continue
+        body = source.read_text(encoding="utf-8")
+        if target.is_file():
+            current = target.read_text(encoding="utf-8", errors="replace")
+            if current == body:
+                skipped.append((label, target, "already up to date"))
+                continue
+            if not args.force:
+                failed.append((label, target, "a different version is already there"))
+                continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body, encoding="utf-8")
+        except OSError as exc:
+            failed.append((label, target, str(exc)))
+            continue
+        installed.append((label, target, why))
+
+    for label, target, why in installed:
+        print(ui.green("✓ ") + "%-20s %s" % (label, ui.dim(str(target))))
+    for label, target, note in skipped:
+        print(ui.dim("· %-20s %s" % (label, note)))
+    for label, target, note in failed:
+        print(ui.red("✗ ") + "%-20s %s" % (label, note))
+        print(ui.dim("    " + str(target)))
+
+    if failed:
+        if any("already there" in note for _, _, note in failed):
+            print()
+            print(ui.dim("overwrite them with: ") + ui.bold("duet skill install --force"))
         return 1
 
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    except OSError as exc:
-        print(ui.red("could not write %s: %s" % (target, exc)))
-        return 1
-
-    print(ui.green("✓ ") + "installed the duet skill to %s" % target)
-    print()
-    print("Claude Code will pick it up in a new session. Then ask it things like:")
-    print(ui.dim("  ") + ui.bold('"get a second opinion on this from ChatGPT"'))
-    print(ui.dim("  ") + ui.bold('"have ChatGPT review the diff before I push"'))
-    print(ui.dim("  ") + ui.bold('"work on this with ChatGPT until you both agree"'))
+    if installed:
+        print()
+        print("Open a new Claude Code or Codex session and type " + ui.bold("/duet") + ":")
+        print(ui.dim("  /duet ") + "add retry with backoff to the fetch client")
+        print(ui.dim("  /duet ") + "running       " + ui.dim("— check on a session already going"))
+        print(ui.dim("  /duet ") + "review        " + ui.dim("— second opinion on the current diff"))
+        print()
+        print(ui.dim("It carries your conversation across, so you do not start cold."))
     return 0
 
 
@@ -559,6 +621,125 @@ def cmd_report(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 # verify: does the last sign-off still describe this workspace?
 # --------------------------------------------------------------------------
+def _read_events(path: Path) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    try:
+        with (path / "events.jsonl").open("r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except ValueError:
+                    continue          # a half-written line from a live session
+    except OSError:
+        return []
+    return events
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Where is the session up to, right now.
+
+    A session runs for many minutes and the person who started it walked away.
+    This answers "is it still going, and what are they arguing about" without
+    reading a transcript — and works while the session is still running, from
+    the event log rather than the final report.
+    """
+    sessions = _sessions(args.root)
+    if args.session:
+        sessions = [p for p in sessions if p.name == args.session]
+        if not sessions:
+            print(ui.red("no session %r in %s" % (args.session, Path(args.root).resolve() / ".duet" / "sessions")))
+            return 2
+    if not sessions:
+        print("no sessions yet in %s" % (Path(args.root).resolve() / ".duet" / "sessions"))
+        print(ui.dim("start one with ") + ui.bold('duet run "..."'))
+        return 2
+
+    path = sessions[-1]
+    events = _read_events(path)
+    if not events:
+        print(ui.yellow("session %s has not recorded anything yet" % path.name))
+        return 2
+
+    start = next((e for e in events if e.get("kind") == "session_start"), {})
+    end = next((e for e in events if e.get("kind") == "session_end"), None)
+    turns = [e for e in events if e.get("kind") == "turn_done"]
+    agents = list((start.get("agents") or {}).keys()) or ["?"]
+
+    last_event = events[-1]
+    age = max(0, int(time.time() - float(last_event.get("t") or time.time())))
+    running = end is None
+
+    if args.json:
+        print(json.dumps({
+            "session": path.name,
+            "running": running,
+            "status": (end or {}).get("status"),
+            "reason": (end or {}).get("reason"),
+            "rounds": (turns[-1].get("round") if turns else 0),
+            "max_rounds": start.get("max_rounds"),
+            "task": start.get("task"),
+            "verdicts": {a: next((t.get("verdict") for t in reversed(turns) if t.get("agent") == a), None)
+                         for a in agents},
+            "waiting_on": (last_event.get("agent") if running and last_event.get("kind") == "turn_start" else None),
+            "seconds_since_last_event": age,
+            "gate_ok": next((t.get("gate_ok") for t in reversed(turns)), None),
+        }, default=str))
+        return 0 if not running and (end or {}).get("status") == STATUS_CONSENSUS else (0 if running else 1)
+
+    print(ui.bold("duet status") + "  " + ui.dim(path.name))
+    task = (start.get("task") or "").strip().splitlines()
+    if task:
+        print("  task:    " + task[0][:78] + ("…" if len(task[0]) > 78 else ""))
+    print("  agents:  " + ", ".join(agents))
+
+    if running:
+        waiting = last_event.get("agent") if last_event.get("kind") == "turn_start" else None
+        round_no = last_event.get("round") or (turns[-1].get("round") if turns else 0)
+        if waiting:
+            print("  " + ui.yellow("running") + "   round %s of %s — waiting on %s for %dm %02ds"
+                  % (round_no, start.get("max_rounds", "?"), ui.bold(waiting), age // 60, age % 60))
+        else:
+            print("  " + ui.yellow("running") + "   round %s of %s — last event %dm %02ds ago"
+                  % (round_no, start.get("max_rounds", "?"), age // 60, age % 60))
+    else:
+        status = (end or {}).get("status")
+        mark = ui.green("finished") if status == STATUS_CONSENSUS else ui.yellow(str(status))
+        print("  " + mark + "  " + str((end or {}).get("reason") or ""))
+
+    for agent in agents:
+        last = next((t for t in reversed(turns) if t.get("agent") == agent), None)
+        if last is None:
+            print("  %-8s %s" % (agent, ui.dim("no turn yet")))
+            continue
+        print("  %-8s %s %s" % (agent, ui.verdict_tag(str(last.get("verdict"))),
+                                ui.dim("round %s" % last.get("round"))))
+        message = (last.get("message") or "").strip().replace("\n", " ")
+        if message and not args.quiet:
+            print(ui.wrap(message[:240] + ("…" if len(message) > 240 else ""), indent="           "))
+
+    open_ids: List[str] = []
+    for turn in turns:
+        for issue_id in turn.get("issues") or []:
+            if issue_id not in open_ids:
+                open_ids.append(issue_id)
+        for issue_id in turn.get("resolves") or []:
+            if issue_id in open_ids:
+                open_ids.remove(issue_id)
+    if open_ids:
+        print("  arguing about: " + ", ".join(open_ids[:6]))
+
+    gate_ok = next((t.get("gate_ok") for t in reversed(turns)), None)
+    if gate_ok is not None:
+        print("  gate:    " + (ui.green("passing") if gate_ok else ui.red("failing")))
+    if running:
+        print()
+        print(ui.dim("  follow it live: ") + ui.bold("duet report --transcript"))
+    return 0 if running or (end or {}).get("status") == STATUS_CONSENSUS else 1
+
+
 VERIFY_OK = 0        # signed state still present, gate still green
 VERIFY_STALE = 1     # a sign-off exists but no longer holds
 VERIFY_NOTHING = 2   # nothing to verify against (no session, or none recorded)
@@ -1116,6 +1297,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("task", nargs="*", help="what the two agents should build or solve")
     common(p_run)
     p_run.add_argument("-f", "--file", help="read the task from a file")
+    p_run.add_argument("--context", help="the conversation this task came out of, so the pair does not start cold")
+    p_run.add_argument("--context-file", metavar="PATH", help="read that context from a file, or - for stdin")
     p_run.add_argument("--accept", help="acceptance criteria, in prose")
     p_run.add_argument("--accept-file", help="read acceptance criteria from a file")
     p_run.add_argument("--gate", help="command that must pass before either agent may finish, e.g. \"pytest -q\"")
@@ -1154,12 +1337,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument("--force", action="store_true", help="re-run the sign-in even if it looks connected")
     p_login.set_defaults(func=cmd_login)
 
-    p_skill = sub.add_parser("skill", help="install the Claude Code skill for duet")
+    p_skill = sub.add_parser("skill", help="install /duet into Claude Code and Codex")
     common(p_skill)
     p_skill.add_argument("action", nargs="?", default="install",
                          choices=["install", "path", "show"],
                          help="install it (default), print its source path, or print it")
-    p_skill.add_argument("--dir", help="install somewhere other than ~/.claude/skills/duet")
+    p_skill.add_argument("--dir", metavar="HOME", help="treat this directory as home (for testing)")
     p_skill.add_argument("--force", action="store_true", help="overwrite an existing copy")
     p_skill.set_defaults(func=cmd_skill)
 
@@ -1170,6 +1353,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sessions = sub.add_parser("sessions", help="list past sessions")
     common(p_sessions)
     p_sessions.set_defaults(func=cmd_sessions)
+
+    p_status = sub.add_parser("status", help="what is the session doing right now (works while it runs)")
+    common(p_status)
+    p_status.add_argument("session", nargs="?", help="session id (default: the newest)")
+    p_status.set_defaults(func=cmd_status)
 
     p_report = sub.add_parser("report", help="print the report for a session (default: the last one)")
     common(p_report)

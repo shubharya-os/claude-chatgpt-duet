@@ -16,11 +16,47 @@ quietly agree they're finished.
 
 ```bash
 pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
-duet login                                        # your Claude and ChatGPT plans, no API keys
-
-duet review --gate "pytest -q"                    # ChatGPT reviews what Claude Code just did
-duet run "fix the retry logic" --gate "pytest -q" # both of them, until they agree
+duet login          # your Claude and ChatGPT plans — no API keys
+duet skill install  # adds /duet to Claude Code and Codex
 ```
+
+Then, in the middle of any Claude Code or Codex session:
+
+```
+/duet add retry with backoff to the fetch client
+```
+
+It takes the conversation you are already in — what you are building, what you ruled
+out, what you already tried — hands it to both agents, and they work it until they both
+sign off. You never leave the thread, and you never re-explain anything.
+
+```
+/duet running     check on a session in progress
+/duet review      second opinion on the current diff
+```
+
+---
+
+## `/duet` — the part you actually use
+
+`duet skill install` puts `/duet` in both assistants, in the exact directories each one
+scans:
+
+| file | what it gives you |
+|---|---|
+| `~/.claude/commands/duet.md` | `/duet` in Claude Code |
+| `~/.codex/prompts/duet.md` | `/duet` in Codex |
+| `~/.claude/skills/duet/SKILL.md` | lets Claude Code reach for duet on its own, when a second opinion would help |
+
+The handoff is the point. Before it runs anything, your assistant writes down what it
+already knows — the goal in your words, decisions already made and ruled out, what it
+tried and what happened, which files matter — and passes that to the pair as **context,
+not instructions**. The task still wins: nothing in the thread can quietly redefine what
+you asked for.
+
+Then it reports back like a colleague. Not "exit code 0" — what changed, what one of
+them objected to, how it resolved, and whether *it* agrees. It is allowed to tell you the
+two of them were wrong.
 
 ---
 
@@ -150,23 +186,6 @@ memory of writing the code is a real reviewer — they just share more blind spo
 
 ---
 
-## Use it from inside Claude Code
-
-```bash
-duet skill install
-```
-
-That installs a skill, so in any Claude Code session you can just say:
-
-> "get a second opinion on this from ChatGPT"
-> "have ChatGPT review the diff before I push"
-> "work on this with ChatGPT until you both agree"
-
-Claude Code runs duet, reads the report, and tells you which objections it thinks are
-right — it's allowed to disagree with the reviewer, and it will say so.
-
----
-
 ## What a real session looks like
 
 This is duet writing a feature **inside its own repository** — real Claude Code, real
@@ -246,6 +265,7 @@ all, the stall is detected and both are told to break it.
 ```bash
 duet review          # one-shot second opinion on the current diff
 duet run "task"      # the full loop until both sign off
+duet status          # what is the session doing right now (works mid-run)
 duet verify          # does the last sign-off still hold? re-runs the gate
 duet login           # sign both sides in
 duet doctor          # real connection check, with the fix for each side
@@ -283,7 +303,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-149 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+155 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q
