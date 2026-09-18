@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "duet-cli"
+version = "0.1.0"
+description = "Claude Code and ChatGPT working the same task together, debating until both sign off."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Shubh Arya" }]
+keywords = ["claude-code", "chatgpt", "openai", "codex", "agents", "pair-programming"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/OWNER/duet"
+Issues = "https://github.com/OWNER/duet/issues"
+
+[project.scripts]
+duet = "duet.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["duet*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
