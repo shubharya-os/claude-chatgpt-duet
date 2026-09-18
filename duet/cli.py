@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -27,7 +28,7 @@ from duet.config import (
     parse_pair,
     save_config,
 )
-from duet.orchestrator import Orchestrator, STATUS_CONSENSUS
+from duet.orchestrator import Orchestrator, STATUS_CONSENSUS, rounds_taken
 from duet.protocol import BLOCKING_SEVERITIES, SEVERITIES, parse_envelope
 
 PREVIEW_CHARS = 700
@@ -930,6 +931,225 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# resume: carry on an interrupted session instead of starting it over
+# --------------------------------------------------------------------------
+RESUME_NOTHING = 2     # nothing here can be carried on
+
+
+def _resume_blocker(data: Dict[str, Any], session: str, max_rounds: int) -> Tuple[str, List[str]]:
+    """Why this session cannot be carried on, and what to type instead.
+
+    Returns ("", []) when it can be. A session that agreed is finished, and one
+    that used its whole budget needs a bigger one — neither is a case where
+    quietly doing nothing helps anybody.
+    """
+    result = data.get("result") or {}
+    if (result.get("status") or "") == STATUS_CONSENSUS:
+        return (
+            "session %s already reached consensus — both agents signed off, so there "
+            "is no argument left to carry on" % session,
+            ["check that the sign-off still holds:  duet verify %s" % session,
+             "or start a fresh session:             duet run \"...\""],
+        )
+    # A session with no task recorded is not a session anyone can carry on, and
+    # resuming one would hand two agents an empty brief for twenty minutes of
+    # paid time. The only way to get one is a truncated or hand-written file.
+    if not str((data.get("config") or {}).get("task") or "").strip():
+        return (
+            "session %s recorded no task, so there is nothing to carry on" % session,
+            ["its state.json is truncated or was written by hand;",
+             "start a fresh session with:  duet run \"...\""],
+        )
+    taken = rounds_taken(data)
+    if taken >= max_rounds:
+        return (
+            "session %s has no rounds left — it has taken %d, and the budget is %d"
+            % (session, taken, max_rounds),
+            # Said plainly because --rounds reads as "extra rounds" to about half
+            # the people who type it, and that misreading lands them right here.
+            ["--rounds sets the new total, not rounds on top of the ones used;",
+             "give it a bigger one:  duet resume %s --rounds %d" % (session, taken + 4)],
+        )
+    return "", []
+
+
+def _resumed_session_id(previous: str) -> str:
+    """An id for the resumed session that sorts after the one it continues.
+
+    Sessions are found and ordered by name, and a name carries only whole
+    seconds. Resume a session in the same second it last saved — a short one,
+    or a scripted one — and the new session sorts *before* it, so the next
+    `duet resume` would pick the dead one again and fork the argument.
+    """
+    session_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
+    if session_id <= previous:
+        session_id = previous + "-r" + uuid.uuid4().hex[:3]
+    return session_id
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    """Pick up a session that died mid-argument, at the round after its last.
+
+    A session is 20-40 minutes of two paid subscriptions. Losing one to a
+    timeout and starting over pays for the same argument twice, so this rebuilds
+    the orchestrator from the state file the dead session was already writing
+    after every turn.
+    """
+    nested = refuse_nested("resume", args)
+    if nested is not None:
+        return nested
+
+    root = str(Path(args.root).expanduser().resolve())
+    as_json = getattr(args, "json", False)
+    where = Path(root) / ".duet" / "sessions"
+
+    def refuse(reason: str, fixes: Sequence[str] = (), code: int = RESUME_NOTHING,
+               session: Optional[str] = None) -> int:
+        if as_json:
+            print(json.dumps({"kind": "resume", "ok": False, "resumed": False, "root": root,
+                              "session": session, "error": reason, "fix": list(fixes),
+                              "exit_code": code}, default=str), flush=True)
+        else:
+            print(ui.red("✗ ") + reason)
+            for fix in fixes:
+                print(ui.dim("  " + fix))
+        return code
+
+    load_env_file(root)
+
+    skipped: List[str] = []
+    finished: List[Tuple[Path, Dict[str, Any]]] = []
+    if getattr(args, "session", None):
+        match = [p for p in _sessions(root) if p.name == args.session]
+        if not match:
+            return refuse(
+                "no session %r in %s" % (args.session, where),
+                ["see what is there:  duet sessions -C %s" % root],
+                session=args.session,
+            )
+        path = match[0]
+        data = _session_state(path)
+        if data is None:
+            return refuse(
+                "session %s saved no state.json, so there is nothing to carry on from" % path.name,
+                ["it died before finishing a single turn — there is no argument to keep;",
+                 "start it again with:  duet run \"...\""],
+                session=path.name,
+            )
+    else:
+        path = None
+        data = None
+        for candidate in reversed(_sessions(root)):
+            candidate_data = _session_state(candidate)
+            if candidate_data is None:
+                skipped.append(candidate.name)
+                continue
+            # A session that agreed is over, and stepping past it is what "the
+            # newest resumable session" means. One that merely ran out of rounds
+            # is a different thing: it is exactly what you meant to resume, and
+            # it needs one flag. Carrying on an older argument instead of saying
+            # so would answer a question nobody asked.
+            if ((candidate_data.get("result") or {}).get("status") or "") == STATUS_CONSENSUS:
+                finished.append((candidate, candidate_data))
+                continue
+            path, data = candidate, candidate_data
+            break
+        if path is None or data is None:
+            if finished:
+                newest, newest_data = finished[0]
+                reason, fixes = _resume_blocker(
+                    newest_data, newest.name,
+                    Config.from_dict(newest_data.get("config") or {}).max_rounds,
+                )
+                return refuse(reason, fixes, session=newest.name)
+            if skipped:
+                return refuse(
+                    "no session in %s saved any state — every one of them died before "
+                    "finishing a turn (%s)" % (where, ", ".join(skipped[:6])),
+                    ["start one with:  duet run \"...\""],
+                )
+            return refuse(
+                "no sessions yet in %s" % where,
+                ["start one with:  duet run \"...\""],
+            )
+
+    cfg = Config.from_dict(data.get("config") or {})
+    cfg.root = root                       # the session may have been copied or moved
+    if getattr(args, "gate", None) is not None:
+        cfg.gate = args.gate
+    if getattr(args, "rounds", None) is not None:
+        cfg.max_rounds = args.rounds
+
+    reason, fixes = _resume_blocker(data, path.name, cfg.max_rounds)
+    if reason:
+        return refuse(reason, fixes, session=path.name)
+
+    problems = preflight(cfg)
+    if problems:
+        return refuse("cannot reach both agents:\n  " + "\n  ".join(problems),
+                      ["fix both sides in one step:  duet login"], code=3, session=path.name)
+
+    # A resumed session gets its own directory: `restore` brings the argument
+    # forward but not the turns already taken, and writing this session's
+    # shorter transcript over the dead one's would destroy the record of them.
+    orch = Orchestrator(
+        cfg,
+        reporter=make_reporter(cfg.agent_names, verbose=not args.quiet, as_json=as_json),
+        session_id=_resumed_session_id(path.name),
+    )
+    try:
+        notes = orch.restore(data)
+    except ValueError as exc:
+        return refuse(
+            "session %s cannot be carried on: %s" % (path.name, exc),
+            ["its state.json has been edited, or was written by a duet that paired "
+             "differently;", "start a fresh session with:  duet run \"...\""],
+            session=path.name,
+        )
+    open_issues = orch.state.open_issues()
+
+    if as_json:
+        print(json.dumps({
+            "kind": "resume", "ok": True, "resumed": True, "root": root,
+            "session": path.name, "continues_as": orch.session_id,
+            "from_round": orch.start_round, "max_rounds": cfg.max_rounds,
+            "open_issues": [i.id for i in open_issues],
+            "signoffs": sorted(orch.state.signoffs),
+            "task": cfg.task,
+            "skipped_sessions": skipped,
+            "skipped_not_resumable": [p.name for p, _ in finished], "notes": notes,
+        }, default=str), flush=True)
+    else:
+        print(ui.bold("duet resume") + "  " + ui.dim(root))
+        if skipped:
+            print(ui.dim("  (skipped %s — saved no state.json)" % ", ".join(skipped)))
+        if finished:
+            print(ui.dim("  (skipped %s — already agreed)" % ", ".join(p.name for p, _ in finished)))
+        print("  %s %s  %s" % (ui.dim("continuing:"), path.name,
+                               ui.dim("as %s" % orch.session_id)))
+        # With no id this can step back past newer sessions, so say what the
+        # argument was actually about. An id alone is not something anyone
+        # recognises, and resuming the wrong one costs a whole session.
+        headline = (cfg.task or "").strip().splitlines()
+        if headline:
+            print("  %s %s" % (ui.dim("task:      "),
+                               headline[0][:78] + ("…" if len(headline[0]) > 78 else "")))
+        print("  %s round %d of %d" % (ui.dim("from:      "), orch.start_round, cfg.max_rounds))
+        print("  %s %s" % (ui.dim("still open:"),
+                           ", ".join(i.id for i in open_issues[:6]) if open_issues
+                           else ui.dim("nothing")))
+        print("  %s %s" % (ui.dim("signed off:"),
+                           ", ".join(sorted(orch.state.signoffs)) or ui.dim("nobody yet")))
+        for note in notes:
+            print("  " + ui.yellow("note: ") + note)
+        print(ui.dim("  the gate runs again before the first new turn — the workspace can "
+                     "have changed while the session was dead."))
+
+    result = orch.run()
+    return 0 if result.status == STATUS_CONSENSUS else 1
+
+
+# --------------------------------------------------------------------------
 # review: one agent, one pass over the working-tree diff, no debate
 # --------------------------------------------------------------------------
 REVIEW_CLEAN = 0       # the reviewer raised nothing that blocks the change
@@ -1358,6 +1578,21 @@ def build_parser() -> argparse.ArgumentParser:
     common(p_status)
     p_status.add_argument("session", nargs="?", help="session id (default: the newest)")
     p_status.set_defaults(func=cmd_status)
+
+    p_resume = sub.add_parser(
+        "resume",
+        help="carry on an interrupted session from where it stopped, keeping the argument",
+    )
+    common(p_resume)
+    p_resume.add_argument("session", nargs="?",
+                          help="session id (default: the newest one that has not agreed yet)")
+    p_resume.add_argument("--rounds", type=int, metavar="N",
+                          help="new total round budget, counting the rounds already used")
+    p_resume.add_argument("--gate", metavar="CMD",
+                          help="use this gate instead of the one the session recorded")
+    p_resume.add_argument("--allow-nested", action="store_true",
+                          help="permit starting this from inside another duet session")
+    p_resume.set_defaults(func=cmd_resume)
 
     p_report = sub.add_parser("report", help="print the report for a session (default: the last one)")
     common(p_report)

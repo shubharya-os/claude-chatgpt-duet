@@ -267,6 +267,7 @@ all, the stall is detected and both are told to break it.
 ```bash
 duet review          # one-shot second opinion on the current diff
 duet run "task"      # the full loop until both sign off
+duet resume          # carry on a session that died, keeping the argument
 duet status          # what is the session doing right now (works mid-run)
 duet verify          # does the last sign-off still hold? re-runs the gate
 duet login           # sign both sides in
@@ -280,6 +281,24 @@ duet sessions        # every session in this workspace
 Useful flags for `run`: `--gate` (your tests — the most valuable one), `--pair`,
 `--rounds`, `--accept "what done means"`, `--swap N` to trade places, `--commit`,
 `--json`.
+
+A session is 20–40 minutes of two subscriptions, and an adapter timeout or a
+Ctrl-C used to throw the whole argument away. `duet resume` picks it up from the
+round after the last one that finished, with the open objections, both sign-offs,
+the arbitration rulings and each agent's own thread with its backend intact:
+
+```bash
+duet resume                        # the newest unfinished session
+duet resume 20250104-142211-9f3a   # or a named one
+duet resume --rounds 20            # a new total budget, counting rounds already used
+duet resume --gate "pytest -q"     # a different gate than the one it recorded
+```
+
+With no id it takes the newest session that has not agreed yet, saying which
+newer ones it stepped over and why. It refuses, and names what to type instead,
+when that session already agreed, has no rounds left, saved no state, or does
+not exist. The gate is re-run before the first new turn, because the workspace
+can have changed while the session was dead.
 
 ---
 

@@ -108,6 +108,39 @@ class Envelope:
             meta=dict(self.meta),
         )
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Envelope":
+        """Rebuild an envelope saved by `to_dict`, for resuming a session.
+
+        Never raises: a state file can be hand-edited or half-written, and a
+        resumed session losing one peer message is a far smaller loss than the
+        whole argument. `raw` is not persisted, so it comes back empty.
+        """
+        data = dict(data or {})
+        env = cls(
+            agent=str(data.get("agent") or ""),
+            message=str(data.get("message") or ""),
+            verdict=str(data.get("verdict") or "CONTINUE"),
+            summary=str(data.get("summary") or ""),
+            parse_ok=bool(data.get("parse_ok", True)),
+        )
+        for field_name, caster in (("round", int), ("confidence", float)):
+            try:
+                setattr(env, field_name, caster(data.get(field_name)))
+            except (TypeError, ValueError):
+                pass
+        env.issues = [Issue.from_dict(i) for i in data.get("issues") or [] if isinstance(i, dict)]
+        env.patches = [
+            Patch(**{k: v for k, v in p.items() if k in Patch.__dataclass_fields__})
+            for p in data.get("patches") or []
+            if isinstance(p, dict) and p.get("path")
+        ]
+        env.resolves = [str(r) for r in data.get("resolves") or []]
+        env.notes = [str(n) for n in data.get("notes") or []]
+        meta = data.get("meta")
+        env.meta = dict(meta) if isinstance(meta, dict) else {}
+        return env
+
 
 def iter_json_objects(text: str) -> List[Tuple[Dict[str, Any], int]]:
     """Every top-level JSON object in `text`, with its start offset.
