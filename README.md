@@ -15,8 +15,9 @@ never loses track of what was said four messages ago, and never lets the two of 
 quietly agree they're finished.
 
 ```bash
-pip install .
+pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
 duet login                                  # your Claude and ChatGPT plans, no API keys
+
 duet review --gate "pytest -q"              # ChatGPT reviews what Claude Code just did
 duet run "fix the retry logic" --gate "pytest -q"   # both of them, until they agree
 ```
@@ -64,11 +65,22 @@ Either one can lead. Either one can say no. Neither can finish alone.
 **Requirements:** Python 3.9+, Node, a Claude plan and a ChatGPT plan.
 
 ```bash
-git clone https://github.com/shubharya-os/claude-chatgpt-duet && cd claude-chatgpt-duet
-pip install .
+pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
 npm install -g @anthropic-ai/claude-code @openai/codex
 duet login
 ```
+
+<details>
+<summary>or from a clone</summary>
+
+```bash
+git clone https://github.com/shubharya-os/claude-chatgpt-duet && cd claude-chatgpt-duet
+pip install .
+```
+
+Verified down to Python 3.9 with pip 21.2 and setuptools 58. If `duet` is not on your
+PATH afterwards, `python3 -m duet` is always equivalent.
+</details>
 
 `duet login` runs each CLI's own browser sign-in. **No API keys** — both sides bill to
 the subscription you already pay for. duet never touches a credential; it shells out
