@@ -1,6 +1,6 @@
 ---
 name: duet
-description: Get a second opinion from ChatGPT on work done in Claude Code, or hand a task to both agents to build together until they agree. Use when the user asks for a second opinion, a cross-check, "what would ChatGPT say", a review of the current diff by another model, or wants two agents to work a task jointly. Also use when the user is about to ship something risky and wants an independent reviewer.
+description: Hand a task to Claude Code and ChatGPT together, so they build it and check each other until both sign off. Use when the user asks for a second opinion from another model, a cross-check, "what would ChatGPT say", or wants two agents to work a task jointly. Also use when the user is about to ship something risky and wants an independent reviewer in the loop.
 ---
 
 # duet — a second model in the loop
@@ -12,28 +12,22 @@ sign off.
 The point is that a single agent grades its own homework. duet puts something in the
 loop that is allowed to say no, and gives that objection weight.
 
-## Which mode
-
-**`duet review` — one agent, one call, no loop.** The cheap default. Use this when the
-user wants a second opinion on work that already exists.
-
-```bash
-duet review --gate "pytest -q"
-```
-
-It shows ChatGPT the working-tree diff and the gate output, and prints its findings by
-severity. Exits 1 if anything blocking was raised.
-
-**`duet run` — both agents, alternating, until both agree.** Use this when the user
-wants the work *built* jointly, not just checked. It is slower and uses both
-subscriptions, so prefer `review` unless the user asked for the full loop.
+## Running it
 
 ```bash
 duet run "the task" --gate "pytest -q"
 ```
 
-Never ends on one agent's say-so: both must vote DONE on the same workspace state,
-with no blocking objection open and the gate passing.
+Both agents take turns in the workspace until they agree. It never ends on one agent's
+say-so: both must vote DONE on the same workspace state, with no blocking objection open
+and the gate passing.
+
+To have the other model check work that already exists, give it that as the task:
+
+```bash
+duet run "review the current diff against the task; fix what is actually wrong" \
+  --gate "pytest -q" --rounds 4
+```
 
 ## Rules for you
 
@@ -54,7 +48,6 @@ with no blocking objection open and the gate passing.
 
 ## Reading the result
 
-`duet review` prints findings grouped by severity: `blocker`, `major`, `minor`.
 `duet run` writes `.duet/sessions/<id>/report.md` (outcome, who signed off on what,
 every issue and its fate) and `transcript.md` (everything both sides said). When a
 session ends without consensus, the report's "what is left" section is the useful part.

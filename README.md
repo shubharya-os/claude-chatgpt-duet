@@ -16,47 +16,29 @@ quietly agree they're finished.
 
 ```bash
 pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
-duet login                                  # your Claude and ChatGPT plans, no API keys
-
-duet review --gate "pytest -q"              # ChatGPT reviews what Claude Code just did
-duet run "fix the retry logic" --gate "pytest -q"   # both of them, until they agree
+duet login                                        # your Claude and ChatGPT plans, no API keys
+duet run "fix the retry logic" --gate "pytest -q" # both of them, until they agree
 ```
 
 ---
 
-## The two things it does
+## What it does
 
-### `duet review` — a second opinion, one command
-
-The cheap one. It shows the other model your working-tree diff and your test output,
-and prints what it objects to. One call, no loop.
-
-```bash
-duet review --gate "pytest -q"
-```
-
-```
-duet review  ChatGPT (Codex) on 14 changed files
-
-  blocker  retry-swallows-cancellation
-     The bare `except Exception` in fetch.py:41 catches CancelledError, so a
-     cancelled request retries instead of stopping. Catch the specific errors.
-
-  minor    test-only-covers-happy-path
-     test_retry.py never asserts the backoff delay actually grows.
-
-1 blocker, 1 minor — exit 1
-```
-
-Use it before you push. It costs one call and catches the thing you stopped looking for.
-
-### `duet run` — both of them, until they agree
-
-The full loop. They take turns in your repo: one builds, the other reviews, they argue,
-they fix. It ends when **both** vote DONE on the **same state of the workspace**, with
-no open objection and your tests passing.
+They take turns in your repo: one builds, the other reviews, they argue, they fix. It
+ends when **both** vote DONE on the **same state of the workspace**, with no open
+objection and your tests passing.
 
 Either one can lead. Either one can say no. Neither can finish alone.
+
+```bash
+duet run "add retry with backoff to src/fetch.py, and a test that proves it" \
+  --gate "pytest -q"
+```
+
+The `--gate` is the important part. It is your real test command, run by the harness
+after every turn. Neither agent may finish while it fails, and neither is ever *asked*
+whether it passed — they are both shown the actual output. Without it, the two of them
+can only agree by argument.
 
 ---
 
@@ -145,12 +127,11 @@ duet skill install
 
 That installs a skill, so in any Claude Code session you can just say:
 
-> "get a second opinion on this from ChatGPT"
-> "have ChatGPT review the diff before I push"
 > "work on this with ChatGPT until you both agree"
+> "have ChatGPT check this before I push"
 
-Claude Code runs duet, reads the findings, and tells you which ones it thinks are right
-— it's allowed to disagree with the reviewer, and it will say so.
+Claude Code runs duet, reads the report, and tells you which objections it thinks are
+right — it's allowed to disagree with the reviewer, and it will say so.
 
 ---
 
@@ -231,7 +212,6 @@ all, the stall is detected and both are told to break it.
 ## Commands
 
 ```bash
-duet review          # one-shot second opinion on the current diff
 duet run "task"      # the full loop until both sign off
 duet verify          # does the last sign-off still hold? re-runs the gate
 duet login           # sign both sides in
@@ -255,7 +235,7 @@ Useful flags for `run`: `--gate` (your tests — the most valuable one), `--pair
 - Claude Code runs under `acceptEdits`, not a blanket bypass, and is granted Bash for
   your gate's own commands and nothing wider.
 - **Two agents cost roughly twice one agent, times the rounds.** `--rounds` is the
-  throttle; the default of 12 is deliberately modest. `duet review` is one call.
+  throttle; the default of 12 is deliberately modest.
 - duet holds no credentials. Each CLI owns its own sign-in.
 
 ---
