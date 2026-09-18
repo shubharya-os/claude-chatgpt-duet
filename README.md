@@ -1,384 +1,274 @@
 # duet
 
-**Claude Code and ChatGPT, on the same task, in the same folder, until both of them sign off.**
+**Stop copy-pasting between ChatGPT and Claude Code.**
 
-You give one task. Two agents work it as peers: one builds, the other reviews, they
-swap, they argue, they fix. A harness in the middle keeps score — who objected to
-what, whether the fix actually landed, and whether the tests still pass. The session
-ends when **both** agents vote `DONE` on the **same state of the workspace**, with no
-open objection and the acceptance gate green.
+You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
+what Claude built. Paste it back to ChatGPT. "Looks good, but you missed the error
+case." Paste that into Claude Code. Repeat until you get bored and ship it.
 
-Either one can lead. Either one can say no. Neither one can finish alone.
+You are the messenger. duet is the messenger — and unlike you, it never gets bored,
+never loses track of what was said four messages ago, and never lets the two of them
+quietly agree they're finished.
 
 ```bash
-git clone https://github.com/shubharya-os/duet && cd duet
 pip install .
-duet login           # signs in to Claude and ChatGPT — no API keys
-duet demo            # runs the whole loop offline, to show you what it does
-duet run "add retry with backoff to src/fetch.py, and a test that proves it" --gate "pytest -q"
+duet login                                  # your Claude and ChatGPT plans, no API keys
+duet review --gate "pytest -q"              # ChatGPT reviews what Claude Code just did
+duet run "fix the retry logic" --gate "pytest -q"   # both of them, until they agree
 ```
-
-**No API keys.** Both sides authenticate with the subscription you already pay for —
-a Claude plan through `claude auth login`, a ChatGPT plan through `codex login`. Your
-credentials go to those two CLIs and their own browser sign-in; duet never sees them,
-never stores them, and has nothing to leak.
 
 ---
 
-## Why two agents instead of one
+## The two things it does
 
-A single agent grades its own homework. It writes the code, decides the code is
-good, and tells you it is done. The failure mode is not that it is stupid — it is
-that nothing in the loop is allowed to tell it no.
+### `duet review` — a second opinion, one command
 
-duet puts something in the loop that is allowed to tell it no, and gives that
-objection real weight:
+The cheap one. It shows the other model your working-tree diff and your test output,
+and prints what it objects to. One call, no loop.
 
-- an objection stays open until **the agent who raised it** says it is fixed — the
-  fixer does not get to close it,
-- a `DONE` vote is void the moment the workspace changes underneath it,
-- the acceptance gate is run by the harness, on the real files, and outranks both
-  agents' opinions,
-- when they go in circles, the harness stops them, takes a final position from each,
-  and forces a recorded ruling.
+```bash
+duet review --gate "pytest -q"
+```
 
-Two models also fail differently, which is the whole point. The reviewer catches
-what the builder's blind spot produced, because it is a different blind spot.
+```
+duet review  ChatGPT (Codex) on 14 changed files
+
+  blocker  retry-swallows-cancellation
+     The bare `except Exception` in fetch.py:41 catches CancelledError, so a
+     cancelled request retries instead of stopping. Catch the specific errors.
+
+  minor    test-only-covers-happy-path
+     test_retry.py never asserts the backoff delay actually grows.
+
+1 blocker, 1 minor — exit 1
+```
+
+Use it before you push. It costs one call and catches the thing you stopped looking for.
+
+### `duet run` — both of them, until they agree
+
+The full loop. They take turns in your repo: one builds, the other reviews, they argue,
+they fix. It ends when **both** vote DONE on the **same state of the workspace**, with
+no open objection and your tests passing.
+
+Either one can lead. Either one can say no. Neither can finish alone.
 
 ---
 
 ## Install
 
-**Requirements:** Python 3.9+, Node (for the two agent CLIs), and a Claude plan and
-a ChatGPT plan.
+**Requirements:** Python 3.9+, Node, a Claude plan and a ChatGPT plan.
 
 ```bash
-git clone https://github.com/shubharya-os/duet && cd duet
-pip install .           # or: pipx install .
-```
-
-Verified down to Python 3.9 with pip 21.2 and setuptools 58. If `duet` is not on
-your PATH afterwards, `python3 -m duet` is always equivalent.
-
-Install the two agent CLIs:
-
-```bash
+git clone https://github.com/shubharya-os/claude-chatgpt-duet && cd claude-chatgpt-duet
+pip install .
 npm install -g @anthropic-ai/claude-code @openai/codex
-```
-
-Then sign both in. One command does both:
-
-```bash
 duet login
 ```
 
-It runs `claude auth login` and `codex login` for you, each of which opens its own
-browser sign-in. duet never handles a credential: it shells out, waits, and then asks
-each CLI whether it worked.
+`duet login` runs each CLI's own browser sign-in. **No API keys** — both sides bill to
+the subscription you already pay for. duet never touches a credential; it shells out
+and afterwards asks each CLI whether it worked.
 
 ```bash
 duet doctor
 ```
 
 ```
-claude  (claude-code)
-  ✓ signed in (claudeai) (/opt/homebrew/bin/claude)
-
-gpt  (codex-cli)
-  ✓ Logged in using ChatGPT (/opt/homebrew/bin/codex)
+claude   ✓ signed in (claude.ai)
+chatgpt  ✓ Logged in using ChatGPT
 
 ready. try: duet run "your task here"
 ```
 
-`doctor` asks each CLI for its real login state — `claude auth status` and
-`codex login status` — rather than checking that the binary exists. A binary that
-runs but is signed out is the single most common way this kind of tool wastes your
-time, and it is reported as not ready.
+`doctor` asks each CLI for its real login state rather than checking a binary exists —
+a tool that runs but is signed out is the most common way this kind of thing wastes
+your afternoon.
 
-### If you would rather use an API key
-
-The key-based path is still there, it is just not the default:
+<details>
+<summary>Prefer an API key?</summary>
 
 ```bash
-duet init --gpt-backend openai-api
+duet run "..." --pair claude+gpt
 export OPENAI_API_KEY=sk-...
 ```
 
-That backend has no tools of its own, so it builds by returning complete files in
-`patches` which the harness writes. It works fine — it is simply billed per token
-instead of covered by a plan you already have.
+That backend has no tools of its own, so it builds by returning complete files which
+the harness writes. Works fine — just billed per token instead of covered by a plan.
+</details>
 
 ---
 
-## Using it
+## Pick your pair
+
+`--pair` decides who's involved and who goes first. The left one leads.
+
+| pair | who does what |
+|---|---|
+| `claude+codex` *(default)* | Claude Code builds, ChatGPT reviews |
+| `codex+claude` | ChatGPT builds, Claude Code reviews |
+| `claude+gpt` | ChatGPT via API key instead of a login |
+| `claude:opus+claude:sonnet` | two Claude models against each other |
+| `codex+codex` | two ChatGPT sessions, fresh context each |
 
 ```bash
-duet run "port the CSV loader to streaming so it handles a 2GB file" --gate "pytest -q"
+duet run "refactor the parser" --pair codex+claude --gate "pytest -q"
 ```
 
-The `--gate` is the single most valuable flag. It is a shell command the harness runs
-itself after every turn. Neither agent may finish while it fails, and neither agent
-is asked whether it passed — the harness ran it and both of them are shown the real
-output. Without a gate the two of them can only agree by argument; with one, they
-have to agree with something that is actually executing.
-
-```bash
-duet run "..." --gate "pytest -q"
-duet run "..." --gate "npm test && npm run typecheck"
-duet run "..." --gate "cargo test && cargo clippy -- -D warnings"
-```
-
-Other flags worth knowing:
-
-| flag | what it does |
-|---|---|
-| `--gpt-backend openai-api` | use an API key instead of a ChatGPT login |
-| `--start gpt` | ChatGPT leads and Claude Code reviews (the default is the reverse) |
-| `--swap 2` | the lead and reviewer trade places every 2 rounds |
-| `--rounds 20` | round limit (default 12) |
-| `--max-debate 3` | rounds an objection may survive before forced arbitration |
-| `--decider gpt` | who rules on a deadlock (default: the side with its own tools) |
-| `--accept "..."` | spells out what "done" means, beyond the task itself |
-| `--commit` | git-commits the result once both sign off |
-| `-C path` | run against another directory |
-| `--json` | machine-readable event stream on stdout |
-
-And the rest of the commands:
-
-| command | what it does |
-|---|---|
-| `duet run "..."` | run a session (see the flags above) |
-| `duet login` | sign both sides in (or `duet login claude` for one) |
-| `duet demo` | the full loop, scripted peers, no keys, no network |
-| `duet doctor` | real login check, with the exact fix per side |
-| `duet init` | write `.duet/config.json` and check the setup |
-| `duet sessions` | every session in this workspace |
-| `duet report` | the last session's report (`--transcript` for everything both of them said) |
-| `duet verify` | re-run the gate now and check the last sign-off still describes this workspace |
-
-`duet verify` is the one to run later — on a fresh clone, in CI, or a month after the
-session. It re-computes the workspace state id, compares it with the one both agents
-signed, re-runs that session's acceptance gate, and prints all three:
-
-```
-duet verify  /work/repo
-  session:   20260919-000120-3a8c  outcome: consensus
-  signed:    809799b2a1c4d5e6  (claude r3, gpt r4)
-  now:       809799b2a1c4d5e6
-  match:     yes
-  gate:      pytest -q  passed
-
-the sign-off still holds. gate re-run and green.
-```
-
-It exits `0` only if the state still matches *and* the gate passes, `1` if the
-workspace drifted, the gate broke, or that session never reached a double sign-off,
-and `2` if there is no recorded session to check against. `duet verify --json` prints
-the same facts as one JSON object; `duet verify <session-id>` checks an older one, and
-`--gate "..."` checks against a different command than the session recorded.
-
-One caveat before you put it in CI: if the session itself ran without a `--gate`, there
-is no command to re-run, and `verify` exits `0` on the state match alone. It says so on
-the last line rather than printing a green "passed" it did not earn, and `--json` reports
-`"gate": {"skipped": true}` — but an exit code cannot say it, so check that field, or
-pass `--gate "..."` to hold an old session to a command it never had.
+Cross-model is the interesting case: two models fail *differently*, so one catches what
+the other's blind spot produced. Same-model pairs still work — a reviewer with no
+memory of writing the code is a real reviewer — they just share more blind spots.
 
 ---
 
-## What a session looks like
+## Use it from inside Claude Code
 
-This is `duet demo` — the real orchestrator, with scripted peers so it runs
-anywhere:
+```bash
+duet skill install
+```
+
+That installs a skill, so in any Claude Code session you can just say:
+
+> "get a second opinion on this from ChatGPT"
+> "have ChatGPT review the diff before I push"
+> "work on this with ChatGPT until you both agree"
+
+Claude Code runs duet, reads the findings, and tells you which ones it thinks are right
+— it's allowed to disagree with the reviewer, and it will say so.
+
+---
+
+## What a real session looks like
+
+This is duet writing a feature **inside its own repository** — real Claude Code, real
+ChatGPT, gated by the test suite:
 
 ```
 round 1 claude (lead) thinking...
-     fs: created greet.py (51 bytes)
      gate passed
-  claude CONTINUE  state cf80217e
-     First pass at greet.py.
+  claude CONTINUE  state 5e7a9342
+     Implemented `duet verify` in duet/cli.py, added tests/test_verify.py
+     (11 tests), turned the README command block into a table.
 
-round 2 gpt (reviewer) thinking...
-  gpt CONTINUE  state cf80217e
-     This ignores half the task: an empty name returns 'Hello, !' instead of
-     being rejected.
-     opened: no-empty-name-validation
+round 2 chatgpt (reviewer) thinking...
+  chatgpt DONE  state 5e7a9342
+     Ran the gate myself: 87 passed. Checked --help and the empty-workspace
+     path (exits 2 with guidance). I would ship this.
 
 round 3 claude (lead) thinking...
-     fs: wrote greet.py (358 bytes)
      gate passed
-  claude CONTINUE  state 809799b2
-     Fair catch — empty names now raise, and I added a self-check so the gate
-     proves it.
-     claimed fixed: no-empty-name-validation
+  claude DONE  state d35aa23b
+     Final check found a sentence of mine that was not true: verify exits 0 on
+     a session recorded without a gate, having run nothing, and CI reads exit
+     codes not prose. Fixed the docs. My edit moved the digest, so you need to
+     re-sign.
 
-round 4 gpt (reviewer) thinking...
-  gpt DONE  state 809799b2
-     Verified: whitespace-only input raises and the gate runs the check.
-     verified fixed: no-empty-name-validation
+round 4 chatgpt (reviewer) thinking...
+  chatgpt DONE  state d35aa23b
+     Re-reviewed the new state. Caveat matches the actual behavior. 87 passed.
 
-round 5 claude (lead) thinking...
-  claude DONE  state 809799b2
-
-────────────────────────────────────────────────────────────────
-BOTH AGENTS SIGNED OFF  both agents signed off on 809799b2
+BOTH AGENTS SIGNED OFF  both agents signed off on d35aa23b
 ```
 
-Note round 1: the gate **passed** on the broken version, because the gate was weak.
-The reviewer caught it anyway. That is the part a single agent with a green test
-suite does not do for you.
+Round 3 is why this exists. ChatGPT had **already approved**. Claude's final-check turn
+then found a false claim in its own README, and fixing it changed the workspace — which
+**voided ChatGPT's sign-off** and forced a fourth round. The second signature wasn't a
+formality, and it wasn't free.
 
 ---
 
 ## How "done" is decided
 
-Four conditions, all enforced by the harness, none of them negotiable by an agent:
+Four conditions. All enforced by the harness. None negotiable by an agent.
 
-1. **Both agents voted `DONE`.** One `DONE` is an opinion, not a result.
-2. **Both votes point at the same workspace.** Every file in the workspace hashes to
-   a state id (`809799b2` above). A sign-off records the id it was cast against; if
-   anyone touches a file afterwards, that sign-off is dropped and that agent has to
-   look again. You cannot approve a version that no longer exists.
-3. **No blocking objection is open.** An agent that votes `DONE` while naming a
-   blocker has its vote downgraded automatically — you cannot approve and object in
-   the same breath.
-4. **The acceptance gate passes**, run by the harness on the real files.
+1. **Both agents voted DONE.** One DONE is an opinion.
+2. **Both votes point at the same workspace.** Every file hashes to a state id
+   (`d35aa23b` above). A sign-off records the id it was cast against — touch any file
+   afterwards and that sign-off is dropped. You cannot approve a version that no longer
+   exists.
+3. **No blocking objection is open.** Vote DONE while naming a blocker and your vote is
+   downgraded automatically. You cannot approve and object in one breath.
+4. **Your tests pass**, run by the harness on the real files. Neither agent is ever
+   *asked* whether they passed.
 
-Anything else — round limit, a backend outage, an agent reporting `BLOCKED` — ends
-the session as *not* done, and the report says exactly what was still open.
-
-### Objections are owned by whoever raised them
+### Objections belong to whoever raised them
 
 ```
-gpt raises   "empty name is accepted"        → open
+chatgpt raises  "empty name is accepted"     → open
 claude fixes it, lists it in `resolves`      → claimed_fixed   (still blocks)
-gpt looks, agrees, does not re-raise         → resolved
-gpt looks, disagrees, re-raises              → open again
+chatgpt looks, agrees, drops it              → resolved
+chatgpt looks, disagrees, re-raises          → open again
 ```
 
-A fixer claiming credit is never enough. This one rule is what stops the two of them
-from politely agreeing their way to a broken result.
+The fixer never closes its own ticket. This one rule is what stops two models from
+politely agreeing their way to a broken result.
 
-### Deadlocks get ruled on, not ignored
+### Deadlocks get ruled on
 
-If an objection survives `--max-debate` rounds, the harness suspends the loop, takes
-a final ≤200-word position from each agent on that one issue, and hands both to the
-decider, who must rule and implement the ruling. The ruling is recorded in the report
-and the issue cannot be reopened. If they stop making progress at all — no file
-changes, no new arguments — the harness detects the stall and tells both of them to
-break it.
+If an objection survives `--max-debate` rounds, the harness stops the loop, takes a
+final ≤200-word position from each side, and makes the decider rule and implement it.
+The ruling goes in the report and can't be reopened. If they stop making progress at
+all, the stall is detected and both are told to break it.
 
 ---
 
-## The envelope
+## Commands
 
-Every turn ends with one JSON block. Prose above it is for the peer; the envelope is
-what the harness acts on.
-
-```json
-{
-  "message": "what you did, and your answer to each objection raised against you",
-  "verdict": "CONTINUE | DONE | BLOCKED",
-  "issues": [{"id": "no-input-validation", "title": "empty name is accepted",
-              "severity": "blocker", "detail": "why it is wrong and what would fix it"}],
-  "resolves": ["an-issue-id-you-have-now-fixed"],
-  "patches": [{"path": "src/app.py", "action": "write", "content": "<complete file>"}],
-  "summary": "one line for the changelog",
-  "confidence": 0.8
-}
+```bash
+duet review          # one-shot second opinion on the current diff
+duet run "task"      # the full loop until both sign off
+duet verify          # does the last sign-off still hold? re-runs the gate
+duet login           # sign both sides in
+duet doctor          # real connection check, with the fix for each side
+duet skill install   # use duet from inside Claude Code
+duet demo            # the whole loop offline — no keys, no network
+duet report          # the last session's report (--transcript for everything said)
+duet sessions        # every session in this workspace
 ```
 
-A reply with no envelope is **never** read as agreement — it becomes `CONTINUE`, and
-the harness asks that agent to send the envelope again. Full details in
-[docs/PROTOCOL.md](docs/PROTOCOL.md).
+Useful flags for `run`: `--gate` (your tests — the most valuable one), `--pair`,
+`--rounds`, `--accept "what done means"`, `--swap N` to trade places, `--commit`,
+`--json`.
 
 ---
 
-## What it writes to disk
+## Cost and safety
 
-Everything lands in `.duet/sessions/<id>/` in your workspace:
-
-| file | what it is |
-|---|---|
-| `report.md` | outcome, who signed off on what, every issue and its fate, rulings, timeline |
-| `transcript.md` | the full conversation, both sides, every round |
-| `events.jsonl` | structured event stream, one JSON object per line |
-| `state.json` | complete session state |
-
-`.duet/sessions/` and `.duet/.env` are added to your `.gitignore` by `duet init`.
+- **The agents write to your working directory.** Run it on a branch you can throw away.
+  duet refuses to write outside the workspace, or into `.git/` and `.duet/`.
+- Claude Code runs under `acceptEdits`, not a blanket bypass, and is granted Bash for
+  your gate's own commands and nothing wider.
+- **Two agents cost roughly twice one agent, times the rounds.** `--rounds` is the
+  throttle; the default of 12 is deliberately modest. `duet review` is one call.
+- duet holds no credentials. Each CLI owns its own sign-in.
 
 ---
 
-## Safety and cost
+## Does it actually work?
 
-- **The agents write to your working directory.** Run it on a git branch you can
-  throw away. duet refuses to write outside the workspace, or into `.git/` and
-  `.duet/`, but within the workspace they have real reach.
-- Claude Code runs with `acceptEdits`, not full bypass. Change it in
-  `.duet/config.json` under the claude agent's `options.permission_mode`.
-- **Two agents cost roughly twice one agent, times the number of rounds.** `--rounds`
-  is your budget control; the default of 12 is deliberately modest. Start there.
-- **duet never touches your credentials.** Each CLI owns its own sign-in and its own
-  token storage. If you use the optional API-key backend instead, the key is read
-  from the environment or `.duet/.env`, never committed, and never passed to the
-  other side.
-- **Your subscriptions are what pay for this.** Two agents across a dozen rounds is
-  real usage on both plans; `--rounds` is the throttle.
+[docs/QA.md](docs/QA.md) is the honest record: what ran live, what's only covered by
+stubs, and the **eleven real bugs** the live runs found — including a signed-out CLI
+that reported itself ready, and a `codex exec` that hung forever whenever stdin was a
+pipe.
+
+Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
+for correctness bugs. All four were real. That's the premise working on its author.
+
+114 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+
+```bash
+pytest -q
+duet demo     # the real orchestrator against scripted peers
+```
 
 ---
 
 ## Limitations
 
-Worth knowing before you rely on it:
+- **Two models can be wrong together.** The double sign-off raises the floor; it isn't
+  proof. The gate is what keeps them honest — always pass `--gate`.
+- **Turns are sequential.** A 12-round session is 12 agent invocations.
+- **Arbitration is a tiebreak, not an oracle.** It ends circular arguments by recording
+  a decision. The report always says who ruled and why.
 
-- **Two models can be wrong together.** The double sign-off raises the floor; it does
-  not make agreement proof. The gate is what keeps them honest — use one.
-- **Turns are sequential.** A round is one agent's full turn, so a 12-round session is
-  12 agent invocations, not 12 parallel ones.
-- **Codex session continuity is best-effort.** Every prompt duet builds is
-  self-contained — the task, the diff, the open issues, the peer's actual words — so
-  a dropped session costs context, not correctness.
-- **Arbitration is a tiebreak, not a truth oracle.** It ends circular arguments by
-  recording a decision and moving on. The report always says who ruled and why.
-
----
-
-## Has this actually been run?
-
-Yes, and [docs/QA.md](docs/QA.md) is the honest record: what ran live, what is only
-covered by stubs, and the six real bugs the live runs found — including a signed-out
-CLI that reported itself ready, and a `codex exec` that hung forever whenever stdin
-was an inherited pipe.
-
-**duet built part of itself.** The `duet verify` command in the table above was
-written by duet: real Claude Code leading, real ChatGPT reviewing, inside this
-repository, gated by the full test suite. Four rounds to consensus.
-
-The run is worth reading because of round 3. ChatGPT had already approved the work.
-Claude, given the final-check turn, found a sentence **in its own README** that was
-not true — `verify` would exit 0 on a session recorded without a gate, having run
-nothing, and CI reads exit codes rather than prose. It fixed that, which moved the
-workspace state id, which voided ChatGPT's approval, which forced a fourth round
-where ChatGPT re-reviewed and re-signed. Neither agent could have ended it alone,
-and the second sign-off was not a formality.
-
-That run also exposed a real flaw: Claude was launched with `acceptEdits`, so it
-could write files but not run the tests, and was reviewing on the harness's word.
-duet now grants Bash for the gate's own executables and nothing else.
-
-## Development
-
-```bash
-pip install -e . pytest   # editable needs pip >= 21.3 and setuptools >= 61
-pytest -q                 # 57 tests, no keys and no network required
-duet demo                 # the orchestrator end to end against scripted peers
-```
-
-The suite covers the rules that matter: a lone `DONE` cannot finish a session, a
-sign-off does not survive a change to the workspace, a failing gate overrides both
-agents, a claimed fix the raiser rejects reopens, a circular argument reaches
-arbitration, a reply with no envelope is not agreement, and a patch aimed outside the
-workspace is refused. The adapters are tested against stub binaries and a stubbed API,
-so the exact flags passed to `claude` and `codex` — and the shapes parsed back — are
-pinned by tests rather than by hope.
-
-MIT licensed.
+MIT licensed. Not affiliated with Anthropic or OpenAI.

@@ -376,6 +376,52 @@ def cmd_login(args: argparse.Namespace) -> int:
     return cmd_doctor(args) if not failures else 1
 
 
+def skill_source() -> Path:
+    return Path(__file__).resolve().parent / "skill" / "SKILL.md"
+
+
+def cmd_skill(args: argparse.Namespace) -> int:
+    """Install the Claude Code skill, so `duet` is reachable from inside Claude."""
+    source = skill_source()
+    if not source.is_file():
+        print(ui.red("the packaged skill is missing at %s" % source))
+        return 1
+
+    target_dir = Path(args.dir).expanduser() if args.dir else Path.home() / ".claude" / "skills" / "duet"
+    target = target_dir / "SKILL.md"
+
+    if args.action == "path":
+        print(source)
+        return 0
+    if args.action == "show":
+        print(source.read_text(encoding="utf-8"))
+        return 0
+
+    if target.is_file() and not args.force:
+        existing = target.read_text(encoding="utf-8", errors="replace")
+        if existing == source.read_text(encoding="utf-8"):
+            print(ui.green("✓ ") + "already installed and up to date: %s" % target)
+            return 0
+        print(ui.yellow("a different version is already installed at %s" % target))
+        print(ui.dim("  re-install it with: ") + ui.bold("duet skill install --force"))
+        return 1
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError as exc:
+        print(ui.red("could not write %s: %s" % (target, exc)))
+        return 1
+
+    print(ui.green("✓ ") + "installed the duet skill to %s" % target)
+    print()
+    print("Claude Code will pick it up in a new session. Then ask it things like:")
+    print(ui.dim("  ") + ui.bold('"get a second opinion on this from ChatGPT"'))
+    print(ui.dim("  ") + ui.bold('"have ChatGPT review the diff before I push"'))
+    print(ui.dim("  ") + ui.bold('"work on this with ChatGPT until you both agree"'))
+    return 0
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
     """Run the whole loop with scripted agents: no keys, no network."""
     from duet.adapters.mock import MockAdapter, envelope
@@ -727,6 +773,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument("agent", nargs="?", choices=["claude", "gpt"], help="sign in just one side")
     p_login.add_argument("--force", action="store_true", help="re-run the sign-in even if it looks connected")
     p_login.set_defaults(func=cmd_login)
+
+    p_skill = sub.add_parser("skill", help="install the Claude Code skill for duet")
+    common(p_skill)
+    p_skill.add_argument("action", nargs="?", default="install",
+                         choices=["install", "path", "show"],
+                         help="install it (default), print its source path, or print it")
+    p_skill.add_argument("--dir", help="install somewhere other than ~/.claude/skills/duet")
+    p_skill.add_argument("--force", action="store_true", help="overwrite an existing copy")
+    p_skill.set_defaults(func=cmd_skill)
 
     p_demo = sub.add_parser("demo", help="run the full loop with scripted agents (no keys, no network)")
     common(p_demo)

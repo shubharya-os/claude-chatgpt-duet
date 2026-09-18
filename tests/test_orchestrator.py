@@ -200,3 +200,34 @@ def test_a_broken_decider_cannot_close_a_blocker(tmp_path):
     assert not orch.state.arbitrations                          # nothing recorded as ruled
     assert orch.state.failed_arbitrations["real-blocker"] >= 1
     assert result.status != "consensus"
+
+
+def test_the_skill_installs_and_is_idempotent(tmp_path):
+    """`duet skill install` is the whole setup for using duet from inside Claude
+    Code, so it has to be safe to run twice and honest when it would overwrite."""
+    from duet.cli import main, skill_source
+
+    target = tmp_path / "duet"
+    assert main(["skill", "install", "--dir", str(target)]) == 0
+    installed = target / "SKILL.md"
+    assert installed.read_text() == skill_source().read_text()
+
+    assert main(["skill", "install", "--dir", str(target)]) == 0      # idempotent
+
+    installed.write_text("someone edited this\n")
+    assert main(["skill", "install", "--dir", str(target)]) == 1      # refuses to clobber
+    assert installed.read_text() == "someone edited this\n"
+    assert main(["skill", "install", "--dir", str(target), "--force"]) == 0
+    assert installed.read_text() == skill_source().read_text()
+
+
+def test_the_skill_declares_what_it_triggers_on():
+    """A skill with no frontmatter is invisible to Claude Code."""
+    from duet.cli import skill_source
+
+    text = skill_source().read_text()
+    assert text.startswith("---")
+    header = text.split("---")[1]
+    assert "name: duet" in header
+    assert "description:" in header
+    assert "second opinion" in header.lower()

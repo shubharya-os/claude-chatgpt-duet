@@ -14,14 +14,17 @@ keywords = ["claude-code", "chatgpt", "openai", "codex", "agents", "pair-program
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/shubharya-os/duet"
-Issues = "https://github.com/shubharya-os/duet/issues"
+Homepage = "https://github.com/shubharya-os/claude-chatgpt-duet"
+Issues = "https://github.com/shubharya-os/claude-chatgpt-duet/issues"
 
 [project.scripts]
 duet = "duet.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["duet*"]
+
+[tool.setuptools.package-data]
+duet = ["skill/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
