@@ -281,11 +281,22 @@ class DebateState:
     def from_dict(cls, data: Dict[str, Any], max_debate: int = 3, stall_limit: int = 3) -> "DebateState":
         state = cls(data.get("agents", []), max_debate=max_debate, stall_limit=stall_limit)
         for raw in data.get("issues", []):
+            if not isinstance(raw, dict):
+                continue
             issue = Issue.from_dict(raw)
             state.issues[issue.id] = issue
         state.last_verdict = dict(data.get("last_verdict", {}))
         for agent, raw in (data.get("signoffs") or {}).items():
-            state.signoffs[agent] = Signoff(**raw)
+            if not isinstance(raw, dict):
+                continue
+            # A hand-edited or half-written state file is the expected input
+            # here, so take the fields that exist and ignore the rest rather
+            # than raising out of a command whose job is to refuse politely.
+            known = {k: v for k, v in raw.items() if k in ("agent", "round", "digest")}
+            known.setdefault("agent", agent)
+            known.setdefault("round", 0)
+            known.setdefault("digest", "")
+            state.signoffs[agent] = Signoff(**known)
         state.arbitrations = list(data.get("arbitrations", []))
         state.failed_arbitrations = dict(data.get("failed_arbitrations", {}))
         state.arbitration_retry_at = dict(data.get("arbitration_retry_at", {}))

@@ -142,6 +142,7 @@ class Config:
         agents = [
             AgentSpec(**{k: v for k, v in a.items() if k in AgentSpec.__dataclass_fields__})
             for a in data.pop("agents", [])
+            if isinstance(a, dict) and a.get("name") and a.get("backend")
         ]
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         cfg = cls(**known)

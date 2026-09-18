@@ -211,7 +211,6 @@ class Orchestrator:
 
     def take_turn(self, agent: str, round_no: int, directive: str = "", ingest: bool = True) -> TurnRecord:
         adapter = self.adapters[agent]
-        self.round_no = max(self.round_no, round_no)
         digest_before = self.workspace.digest()
         prompt = self._build_prompt(agent, round_no, directive, digest_before)
         role = self.role_of(agent, round_no)
@@ -225,6 +224,11 @@ class Orchestrator:
                 digest=digest_before, error=reply.error, meta=reply.meta,
             )
             self.turns.append(record)
+            # Counted only now. `round_no` means rounds *finished*: a Ctrl-C
+            # during the adapter call used to leave the round marked as taken,
+            # so resume started one round late, gave the turn to the other
+            # agent, and dropped the directive this one was owed.
+            self.round_no = max(self.round_no, round_no)
             self.emit("turn_error", round=round_no, agent=agent, error=reply.error)
             return record
 
@@ -256,6 +260,7 @@ class Orchestrator:
             record.ingest = report.render()
         self.last_envelope[agent] = env
         self.turns.append(record)
+        self.round_no = max(self.round_no, round_no)
 
         self.history.append(
             "R%-2d %-6s %-8s %s%s%s"
@@ -377,6 +382,16 @@ class Orchestrator:
             if name in self.adapters and str(directive or "").strip():
                 self.pending_directive[name] = str(directive)
 
+        # Two more inputs the next prompt is built out of. A file an agent asked
+        # to see is owed to it: dropping the request means its prompt silently
+        # omits the file and it spends a turn asking again.
+        for name, paths in (data.get("pending_reads") or {}).items():
+            if name in self.adapters and isinstance(paths, list):
+                self.pending_reads[name] = [str(p) for p in paths if str(p).strip()]
+        for name, log in (data.get("pending_patch_log") or {}).items():
+            if name in self.adapters and isinstance(log, list):
+                self.pending_patch_log[name] = [str(line) for line in log]
+
         # A BLOCKED verdict is why that session stopped. The human has since
         # asked for it to carry on, so it is history, not a live position:
         # leaving it in place would end the resumed session after one turn,
@@ -467,6 +482,11 @@ class Orchestrator:
                     self.state.stall_rounds = 0
         except KeyboardInterrupt:
             status, reason = STATUS_INTERRUPTED, "interrupted by the user"
+            # The turn never happened, so give back the directive that was
+            # popped for it — otherwise a stall nudge or an "envelope missing"
+            # correction is lost across the resume.
+            if agent and directive:
+                self.pending_directive[agent] = directive
 
         digest = self.workspace.digest()
         gate = self.gate_for(digest)
@@ -500,6 +520,8 @@ class Orchestrator:
                 "history": self.history,
                 "adapters": {name: a.state() for name, a in self.adapters.items()},
                 "last_envelope": {k: v.to_dict() for k, v in self.last_envelope.items()},
+                "pending_reads": {k: list(v) for k, v in self.pending_reads.items()},
+                "pending_patch_log": {k: list(v) for k, v in self.pending_patch_log.items()},
                 "result": (
                     {"status": result.status, "rounds": result.rounds, "reason": result.reason}
                     if result

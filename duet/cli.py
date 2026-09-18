@@ -1099,7 +1099,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
     )
     try:
         notes = orch.restore(data)
-    except ValueError as exc:
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
         return refuse(
             "session %s cannot be carried on: %s" % (path.name, exc),
             ["its state.json has been edited, or was written by a duet that paired "
@@ -1495,11 +1495,18 @@ def cmd_review(args: argparse.Namespace) -> int:
     if touched:
         # The findings may still be worth reading, but they no longer describe
         # what is on disk, so this cannot exit as a clean or merely-noisy review.
-        # Files the gate itself wrote are excluded above; these are the
-        # reviewer's own.
-        return fail("%s modified the workspace while reviewing it (%s), so these findings "
-                    "no longer describe what is on disk. Check `git status` before "
-                    "trusting them." % (reviewer, ", ".join(touched[:8])))
+        #
+        # Deliberately not phrased as "the reviewer edited these": duet sees the
+        # workspace change, not who changed it, and anyone can be editing in
+        # another window while a review runs. Saying the reviewer did it is an
+        # accusation duet cannot support — and it made one, wrongly, the first
+        # time this fired.
+        return fail("the workspace changed while %s was reviewing it (%s), so these "
+                    "findings no longer describe what is on disk. If that was you "
+                    "editing in another window, re-run the review; if not, %s is "
+                    "held read-only and should not have written anything. "
+                    "Check `git status` either way."
+                    % (reviewer, ", ".join(touched[:8]), reviewer))
 
     return finish(REVIEW_FINDINGS if blocking else REVIEW_CLEAN)
 

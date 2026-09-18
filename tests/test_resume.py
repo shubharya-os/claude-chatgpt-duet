@@ -9,6 +9,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from duet.adapters.mock import MockAdapter, envelope
 from duet.cli import main
 from duet.config import AgentSpec, Config
@@ -401,3 +403,123 @@ def test_resuming_a_resumed_session_chains(tmp_path, capsys):
     last = state_of(newest_session(tmp_path))
     assert last["resumed_from"] == middle.name
     assert [line.split()[0] for line in last["history"]][:2] == ["R1", "R2"]
+
+
+# --- findings from an independent review of this feature --------------------
+
+def _interruptible_session(tmp_path, fail_on_round):
+    """A session whose agent raises KeyboardInterrupt mid-turn, like Ctrl-C."""
+    from duet.adapters.mock import MockAdapter, envelope
+    from duet.config import AgentSpec, Config
+    from duet.orchestrator import Orchestrator
+
+    keep_going = envelope("still working", "CONTINUE")
+
+    class Interrupts(MockAdapter):
+        def send(self, prompt, system="", round_no=0):
+            if round_no == fail_on_round:
+                raise KeyboardInterrupt
+            return super().send(prompt, system, round_no)
+
+    cfg = Config(task="t", root=str(tmp_path), max_rounds=8,
+                 agents=[AgentSpec("a", "mock"), AgentSpec("b", "mock")])
+    orch = Orchestrator(cfg, adapters={
+        "a": Interrupts(name="a", cwd=str(tmp_path), config={"script": [keep_going]}),
+        "b": MockAdapter(name="b", cwd=str(tmp_path), config={"script": [keep_going]}),
+    })
+    return orch, orch.run()
+
+
+def test_a_round_interrupted_mid_turn_is_not_counted_as_taken(tmp_path):
+    """Ctrl-C is the headline reason to resume. Counting the interrupted round
+    as finished made resume start one round late, hand the turn to the other
+    agent, and drop the directive this one was owed."""
+    orch, result = _interruptible_session(tmp_path, fail_on_round=3)
+    assert result.status == "interrupted"
+    assert orch.round_no == 2, "only rounds that produced a turn should count"
+
+    state = json.loads((Path(result.session_dir) / "state.json").read_text())
+    assert state["rounds"] == 2
+
+    from duet.orchestrator import rounds_taken
+    assert rounds_taken(state) == 2          # so resume starts at round 3, with agent 'a'
+
+
+def test_an_interrupted_turn_keeps_the_directive_it_was_owed(tmp_path):
+    from duet.adapters.mock import MockAdapter, envelope
+    from duet.config import AgentSpec, Config
+    from duet.orchestrator import Orchestrator
+
+    class Interrupts(MockAdapter):
+        def send(self, prompt, system="", round_no=0):
+            if round_no == 2:
+                raise KeyboardInterrupt
+            return super().send(prompt, system, round_no)
+
+    cfg = Config(task="t", root=str(tmp_path), max_rounds=6,
+                 agents=[AgentSpec("a", "mock"), AgentSpec("b", "mock")])
+    orch = Orchestrator(cfg, adapters={
+        "a": MockAdapter(name="a", cwd=str(tmp_path),
+                         config={"script": [envelope("go on", "CONTINUE")]}),
+        "b": Interrupts(name="b", cwd=str(tmp_path),
+                        config={"script": [envelope("go on", "CONTINUE")]}),
+    })
+    orch.pending_directive["b"] = "break the stall"
+    orch.run()
+    assert orch.pending_directive.get("b") == "break the stall"
+
+    saved = json.loads((Path(orch.session_dir) / "state.json").read_text())
+    assert saved["pending_directive"]["b"] == "break the stall"
+
+
+def test_files_an_agent_asked_to_see_survive_a_resume(tmp_path):
+    """`reads` is owed to the agent that asked. Losing it means its next prompt
+    silently omits the file and it spends a turn asking again."""
+    from duet.adapters.mock import MockAdapter, envelope
+    from duet.config import AgentSpec, Config
+    from duet.orchestrator import Orchestrator
+
+    cfg = Config(task="t", root=str(tmp_path), max_rounds=2,
+                 agents=[AgentSpec("a", "mock"), AgentSpec("b", "mock")])
+    orch = Orchestrator(cfg, adapters={
+        n: MockAdapter(name=n, cwd=str(tmp_path), config={"script": [
+            envelope("show me that file", "CONTINUE", reads=["duet/cli.py"])]})
+        for n in ("a", "b")
+    })
+    orch.run()
+    saved = json.loads((Path(orch.session_dir) / "state.json").read_text())
+    assert saved["pending_reads"]["a"] == ["duet/cli.py"]
+
+    fresh = Orchestrator(cfg, adapters={
+        n: MockAdapter(name=n, cwd=str(tmp_path)) for n in ("a", "b")
+    })
+    fresh.restore(saved)
+    assert fresh.pending_reads["a"] == ["duet/cli.py"]
+
+
+@pytest.mark.parametrize("broken", [
+    {"state": {"agents": ["a", "b"], "signoffs": {"a": {"unexpected": 1}}}},
+    {"state": {"agents": ["a", "b"], "issues": ["not an object"]}},
+    {"config": {"agents": ["not an object"]}},
+])
+def test_a_malformed_state_file_never_raises(tmp_path, broken, capsys):
+    """This is the exact file class the command already anticipates. Whether it
+    refuses or skips the unusable part, it must not reach the user as a
+    traceback out of a command whose whole contract is to fail politely."""
+    from duet.cli import main
+
+    session = tmp_path / ".duet" / "sessions" / "20260101-000000-bbbb"
+    session.mkdir(parents=True)
+    payload = {"session_id": "20260101-000000-bbbb",
+               "config": {"task": "t", "agents": [{"name": "a", "backend": "mock"},
+                                                  {"name": "b", "backend": "mock"}],
+                          "max_rounds": 8},
+               "state": {"agents": ["a", "b"]}, "rounds": 1}
+    payload.update(broken)
+    session.joinpath("state.json").write_text(json.dumps(payload))
+
+    code = main(["resume", "20260101-000000-bbbb", "-C", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert isinstance(code, int)                  # returned, did not raise
+    assert "traceback" not in out.lower()
+    assert "AttributeError" not in out and "TypeError" not in out
