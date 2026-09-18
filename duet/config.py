@@ -37,6 +37,54 @@ def load_env_file(root: str) -> List[str]:
     return loaded
 
 
+# What people type, and what it means. The left of a pair leads.
+BACKEND_ALIASES: Dict[str, "tuple"] = {
+    "claude": ("claude-code", "claude"),
+    "claude-code": ("claude-code", "claude"),
+    "cc": ("claude-code", "claude"),
+    "codex": ("codex-cli", "chatgpt"),
+    "chatgpt": ("codex-cli", "chatgpt"),
+    "codex-cli": ("codex-cli", "chatgpt"),
+    "openai": ("openai-api", "chatgpt"),
+    "gpt": ("openai-api", "chatgpt"),
+    "openai-api": ("openai-api", "chatgpt"),
+    "mock": ("mock", "mock"),
+}
+
+DEFAULT_PAIR = "claude+codex"
+
+
+def parse_pair(spec: str) -> List["AgentSpec"]:
+    """Turn `claude+codex` — or `codex+claude`, or `claude:opus+claude:sonnet` —
+    into two agents. The one on the left takes the first turn.
+    """
+    parts = [p.strip() for p in str(spec).split("+") if p.strip()]
+    if len(parts) != 2:
+        raise ValueError(
+            "a pair needs exactly two agents, like claude+codex — got %r.\n"
+            "Known agents: %s" % (spec, ", ".join(sorted(set(BACKEND_ALIASES))))
+        )
+
+    agents: List[AgentSpec] = []
+    for part in parts:
+        alias, _, model = part.partition(":")
+        alias = alias.strip().lower()
+        if alias not in BACKEND_ALIASES:
+            raise ValueError(
+                "unknown agent %r in %r.\nKnown agents: %s"
+                % (alias, spec, ", ".join(sorted(set(BACKEND_ALIASES))))
+            )
+        backend, name = BACKEND_ALIASES[alias]
+        agents.append(AgentSpec(name=name, backend=backend, model=model.strip()))
+
+    # Two of the same need telling apart in every transcript and report.
+    if agents[0].name == agents[1].name:
+        for index, agent in enumerate(agents, start=1):
+            suffix = agent.model.split("/")[-1] if agent.model else str(index)
+            agent.name = "%s-%s" % (agent.name, suffix)
+    return agents
+
+
 @dataclass
 class AgentSpec:
     name: str
@@ -110,10 +158,7 @@ def default_agents(prefer_codex: Optional[bool] = None) -> List[AgentSpec]:
     """
     if prefer_codex is None:
         prefer_codex = True
-    return [
-        AgentSpec(name="claude", backend="claude-code"),
-        AgentSpec(name="gpt", backend="codex-cli" if prefer_codex else "openai-api"),
-    ]
+    return parse_pair(DEFAULT_PAIR if prefer_codex else "claude+openai")
 
 
 def default_config(root: str = ".") -> Config:

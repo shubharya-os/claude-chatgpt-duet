@@ -13,6 +13,8 @@ from duet import __version__, ui
 from duet.adapters import REGISTRY
 from duet.adapters.base import Adapter
 from duet.config import (
+    BACKEND_ALIASES,
+    DEFAULT_PAIR,
     AgentSpec,
     Config,
     config_dir,
@@ -20,6 +22,7 @@ from duet.config import (
     default_agents,
     load_config,
     load_env_file,
+    parse_pair,
     save_config,
 )
 from duet.orchestrator import Orchestrator, STATUS_CONSENSUS
@@ -127,13 +130,18 @@ def build_config(args: argparse.Namespace) -> Config:
 
     if not cfg.agents:
         cfg.agents = default_agents()
-    by_name = {a.name: a for a in cfg.agents}
-    if getattr(args, "gpt_backend", None):
-        by_name["gpt"].backend = args.gpt_backend
-    if getattr(args, "claude_model", None):
-        by_name["claude"].model = args.claude_model
-    if getattr(args, "gpt_model", None):
-        by_name["gpt"].model = args.gpt_model
+    if getattr(args, "pair", None):
+        try:
+            cfg.agents = parse_pair(args.pair)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+    for name in ("start", "decider"):
+        chosen = getattr(args, name, "")
+        if chosen and chosen not in cfg.agent_names:
+            raise SystemExit(
+                "--%s %r is not one of this pair: %s"
+                % (name, chosen, ", ".join(cfg.agent_names))
+            )
 
     if args.gate is not None:
         cfg.gate = args.gate
@@ -235,7 +243,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         probe = CodexCliAdapter.probe()
         print(ui.dim("optional: codex CLI — ") + (ui.green(probe.detail) if probe.ok else ui.dim(probe.detail)))
         if probe.ok:
-            print(ui.dim("  (run `duet init --gpt-backend codex-cli` to give ChatGPT its own tools)"))
+            print(ui.dim("  (run `duet init --pair claude+codex` to give ChatGPT its own tools)"))
 
     ws = Workspace(root)
     print(ui.dim("git repo: ") + ("yes" if ws.is_git_repo else ui.yellow("no — duet works anyway, but a repo makes review much better")))
@@ -258,9 +266,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     load_env_file(root)
     cfg = load_config(root)
     cfg.root = root
-    if args.gpt_backend:
+    if getattr(args, "pair", None):
+        try:
+            cfg.agents = parse_pair(args.pair)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+    elif getattr(args, "gpt_backend", None):   # older flag, still honoured
         for spec in cfg.agents:
-            if spec.name == "gpt":
+            if spec.backend in ("codex-cli", "openai-api"):
                 spec.backend = args.gpt_backend
     if args.gate is not None:
         cfg.gate = args.gate
@@ -319,7 +332,7 @@ def cmd_login(args: argparse.Namespace) -> int:
             plan.append((spec.name, CodexCliAdapter, ["login"], "ChatGPT"))
         elif spec.backend == "openai-api":
             print(ui.yellow("%s uses the API-key backend (openai-api); nothing to sign in to." % spec.name))
-            print(ui.dim("  switch it to a ChatGPT login with: duet init --gpt-backend codex-cli"))
+            print(ui.dim("  switch it to a ChatGPT login with: duet init --pair claude+codex"))
 
     if args.agent:
         plan = [item for item in plan if item[0] == args.agent]
@@ -684,12 +697,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--gate", help="command that must pass before either agent may finish, e.g. \"pytest -q\"")
     p_run.add_argument("--rounds", type=int, help="maximum rounds (default 12)")
     p_run.add_argument("--max-debate", type=int, help="rounds an issue may stay open before arbitration (default 3)")
-    p_run.add_argument("--start", choices=["claude", "gpt"], help="who takes the first turn")
-    p_run.add_argument("--decider", choices=["claude", "gpt"], help="who rules on deadlocked issues")
+    p_run.add_argument(
+        "--pair",
+        metavar="A+B",
+        help="which two agents, and who leads (default: %s). "
+        "A and B are any of: %s. Add a model with a colon, e.g. claude:opus+codex."
+        % (DEFAULT_PAIR, ", ".join(sorted(set(BACKEND_ALIASES)))),
+    )
+    p_run.add_argument("--start", help="who takes the first turn (defaults to the left of --pair)")
+    p_run.add_argument("--decider", help="who rules on deadlocked issues")
     p_run.add_argument("--swap", type=int, help="swap lead/reviewer every N rounds (0 = never)")
-    p_run.add_argument("--gpt-backend", choices=["openai-api", "codex-cli"], help="how to reach ChatGPT")
-    p_run.add_argument("--claude-model", help="model for the Claude Code side")
-    p_run.add_argument("--gpt-model", help="model for the ChatGPT side")
     p_run.add_argument("--commit", action="store_true", help="git-commit the result when both sign off")
     p_run.set_defaults(func=cmd_run)
 
@@ -699,7 +716,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="write .duet/config.json and check the setup")
     common(p_init)
-    p_init.add_argument("--gpt-backend", choices=["openai-api", "codex-cli"])
+    p_init.add_argument("--pair", metavar="A+B", help="which two agents to pin (default: %s)" % DEFAULT_PAIR)
+    p_init.add_argument("--gpt-backend", choices=["openai-api", "codex-cli"], help=argparse.SUPPRESS)
     p_init.add_argument("--gate")
     p_init.add_argument("--rounds", type=int)
     p_init.set_defaults(func=cmd_init)
