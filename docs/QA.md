@@ -145,6 +145,49 @@ defects worth fixing:
    adapter believed it and burned the round. It now confirms with `codex login status`
    before giving up, and treats an unconfirmed report as a retryable error.
 
+## duet built `duet resume` — and the session died proving why it was needed
+
+A third session, in its own worktree. It produced the feature (Claude leading,
+ChatGPT reviewing) and then **ran out of ChatGPT quota mid-argument**: the account's
+Codex allowance was exhausted, and the session ended with one sign-off instead of two.
+`duet resume` was used to continue it — the feature recovering the session that was
+building it — which worked, and then hit the same wall.
+
+**So `duet resume` does not carry a cross-vendor consensus.** It has Claude's sign-off
+and a separate review by a different Claude model (`--pair claude:sonnet+claude:opus`),
+which is a real second opinion but not the cross-vendor one this tool exists for. The
+green CI badge should not be read as saying otherwise.
+
+That review found three real defects, all now fixed with regression tests:
+
+1. **A round interrupted mid-turn counted as taken.** `take_turn` bumped the round
+   counter before calling the adapter, so a Ctrl-C — the headline reason to resume —
+   recorded a round that produced nothing. Resume started one round late, gave the turn
+   to the other agent (who then spoke twice in a row), and dropped the directive the
+   interrupted agent was owed, which is how a stall nudge silently disappears.
+2. **`pending_reads` and `pending_patch_log` were used but never saved**, contradicting
+   `restore`'s own docstring. A file an agent asked to see vanished across a resume and
+   it had to spend a turn asking again.
+3. **A malformed state file raised a traceback** out of a command whose entire contract
+   is to refuse politely.
+
+### What went wrong on the human side of this
+
+Recorded because they are the same class of error the tool is built to catch.
+
+- **A usage limit was misdiagnosed as a stdin bug**, and code was changed on that
+  basis. duet reported the *first* 800 characters of codex's output, which is always
+  the startup banner; the real `ERROR:` line is at the end. The change was reverted and
+  the actual defect — reporting the banner instead of the error — was fixed.
+- **`git checkout` discarded the agents' work mid-merge.** The `state()`/`restore()`
+  methods they added to the codex adapter were thrown away and only came back because
+  their own test failed during the conflict.
+- **A commit was pushed with a failing test**, after changing a message without
+  re-reading the test that pinned its wording. CI caught it; the author should have.
+- **duet accused the reviewer of editing the workspace** when the edit was a concurrent
+  human commit. duet sees the change, not who made it. The message now says what it
+  observed and offers both explanations.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,
