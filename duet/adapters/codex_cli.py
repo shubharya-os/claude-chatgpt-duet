@@ -27,6 +27,32 @@ INSTALL_HINT = "npm install -g @openai/codex"
 LOGIN_HINT = "codex login   (sign in with your ChatGPT account — no API key needed)"
 
 
+USAGE_LIMIT_MARKERS = ("usage limit", "rate limit", "quota")
+
+
+def explain_failure(output: str) -> str:
+    """Pull the actual error out of codex's output.
+
+    codex prints a banner and echoes the prompt before it fails, and the real
+    line is at the *end*. Reporting the first N characters means reporting the
+    banner — which is how a plain usage limit got misdiagnosed as a stdin bug
+    and cost a code change. Look for the error, then fall back to the tail.
+    """
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    errors = [line for line in lines if line.upper().startswith("ERROR")]
+    if errors:
+        first = errors[0]
+        if any(marker in first.lower() for marker in USAGE_LIMIT_MARKERS):
+            return (
+                "%s\n\nThat is the ChatGPT account's Codex allowance, not duet. "
+                "Wait for the reset, upgrade the plan, or run this pair another "
+                "way: `--pair claude+gpt` uses an OpenAI API key instead, and "
+                "`--pair claude:opus+claude:sonnet` uses two Claude models." % first
+            )
+        return first
+    return "\n".join(lines[-6:]) or "codex produced no output"
+
+
 def read_login_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], str]:
     """(logged_in, human description). None means it could not be determined."""
     try:
@@ -57,14 +83,10 @@ class CodexCliAdapter(Adapter):
         self.timeout = int(self.config.get("timeout", 1800))
         self.sandbox = str(self.config.get("sandbox", "workspace-write"))
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
-        # `codex exec resume --last` looked like free continuity and was not: with
-        # a prompt argument and a non-tty stdin, codex decides the real prompt is
-        # coming from stdin, prints "Reading additional input from stdin...", and
-        # returns no final message. It cost a turn in a live session. Every prompt
-        # duet builds is self-contained — task, diff, open issues, the peer's own
-        # words, gate output — so a fresh session loses context the agent did not
-        # need, and buys back a failure mode. Opt back in if you want it.
-        self.use_resume = bool(self.config.get("use_resume", False))
+        # Continuity is cheap when it works and costs nothing when it does not:
+        # every prompt duet builds is self-contained, so a failed resume falls
+        # back to a fresh session without losing anything that matters.
+        self.use_resume = bool(self.config.get("use_resume", True))
         self.turns = 0
 
     def read_only(self) -> str:
@@ -159,7 +181,7 @@ class CodexCliAdapter(Adapter):
                         meta={"backend": self.backend, "model": self.model,
                               "used_last_message_file": bool(final)},
                     )
-                last_error = combined[:800] or "codex exited %d" % proc.returncode
+                last_error = explain_failure(combined) or "codex exited %d" % proc.returncode
             return AgentReply(text="", error=last_error)
         finally:
             try:

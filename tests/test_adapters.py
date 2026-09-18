@@ -408,10 +408,10 @@ def test_a_real_sign_out_is_still_reported(tmp_path):
     assert not reply.ok and "codex login" in reply.error
 
 
-def test_codex_does_not_reach_for_resume_by_default(tmp_path, monkeypatch):
-    """`codex exec resume --last` with a prompt argument and a non-tty stdin makes
-    codex read the prompt from stdin instead, print "Reading additional input from
-    stdin..." and return nothing. That cost a real turn, so continuity is opt-in."""
+def test_codex_continues_its_session_across_turns(tmp_path, monkeypatch):
+    """Continuity is on by default and costs nothing when it fails: every prompt
+    duet builds is self-contained, so a failed resume falls back to a fresh
+    session without losing anything."""
     dump = tmp_path / "args.txt"
     monkeypatch.setenv("ARGDUMP", str(dump))
     agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
@@ -427,13 +427,13 @@ printf '%s' '{"message":"ok","verdict":"DONE"}' > "$out"
 ''')
     agent.send("turn one")
     agent.send("turn two")
-    assert "resume" not in dump.read_text()
+    assert "--last" in dump.read_text()
 
 
-def test_codex_resume_can_be_switched_back_on(tmp_path, monkeypatch):
+def test_codex_resume_can_be_switched_off(tmp_path, monkeypatch):
     dump = tmp_path / "args.txt"
     monkeypatch.setenv("ARGDUMP", str(dump))
-    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path), config={"use_resume": True})
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path), config={"use_resume": False})
     agent.bin = fake_bin(tmp_path, "codex", r'''
 out=""
 args="$@"
@@ -446,4 +446,40 @@ printf '%s' '{"message":"ok","verdict":"DONE"}' > "$out"
 ''')
     agent.send("turn one")
     agent.send("turn two")
-    assert "resume" in dump.read_text()
+    assert "--last" not in dump.read_text()
+
+
+def test_codex_failures_report_the_error_not_the_banner(tmp_path):
+    """codex prints a banner and echoes the prompt before failing, so the real
+    line is last. Reporting the first N characters reports the banner — which is
+    exactly how a plain usage limit was misdiagnosed as a stdin bug."""
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", r'''
+echo "Reading additional input from stdin..." >&2
+echo "OpenAI Codex v0.155.0" >&2
+echo "--------" >&2
+echo "workdir: /tmp" >&2
+echo "user" >&2
+echo "do the thing" >&2
+echo "ERROR: You've hit your usage limit. Try again at Oct 18th." >&2
+exit 1
+''')
+    reply = agent.send("go")
+    assert not reply.ok
+    assert "usage limit" in reply.error
+    assert "OpenAI Codex v0.155.0" not in reply.error       # not the banner
+    assert "--pair claude+gpt" in reply.error               # and a way forward
+
+
+def test_a_plain_codex_error_is_reported_verbatim(tmp_path):
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", 'echo "banner" >&2; echo "ERROR: disk full" >&2; exit 1')
+    reply = agent.send("go")
+    assert "disk full" in reply.error and "usage limit" not in reply.error
+
+
+def test_output_with_no_error_line_falls_back_to_the_tail(tmp_path):
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", 'echo "banner line" >&2; echo "something odd at the end" >&2; exit 2')
+    reply = agent.send("go")
+    assert "something odd at the end" in reply.error
