@@ -194,6 +194,33 @@ class Workspace:
 
     TRIM_MARKER = "...[trimmed at"
 
+    def diff_since(self, ref: str, limit: int = 12000) -> str:
+        """Everything on this branch that `ref` does not have.
+
+        Reviewing work you have already committed is the ordinary case — it is
+        what "review my branch" means — and the working tree is empty by then.
+        """
+        if not self.is_git_repo:
+            return "(not a git repository, so there is no %s to compare against)" % ref
+        code, out = self._git("rev-parse", "--verify", "--quiet", "%s^{commit}" % ref)
+        if code != 0:
+            return "<no such ref: %s>" % ref
+        parts: List[str] = []
+        code, stat = self._git("--no-pager", "diff", "--stat", "%s...HEAD" % ref)
+        if code == 0 and stat.strip():
+            parts.append(stat.strip())
+        code, body = self._git("--no-pager", "diff", "%s...HEAD" % ref)
+        if code != 0:
+            return "<could not diff against %s: %s>" % (ref, body.strip()[:200])
+        if body.strip():
+            parts.append(body.strip())
+        if not parts:
+            return "(nothing on this branch that %s does not already have)" % ref
+        joined = "\n\n".join(parts)
+        if len(joined) > limit:
+            joined = joined[:limit] + "\n...[trimmed at %d chars]..." % limit
+        return joined
+
     def diff(self, limit: int = 12000) -> str:
         """What the peer needs to review: the change, not the whole repo.
 

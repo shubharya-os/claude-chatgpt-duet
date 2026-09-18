@@ -266,6 +266,7 @@ all, the stall is detected and both are told to break it.
 
 ```bash
 duet review          # one-shot second opinion on the current diff
+duet review --since main   # ...or on everything this branch adds
 duet run "task"      # the full loop until both sign off
 duet resume          # carry on a session that died, keeping the argument
 duet status          # what is the session doing right now (works mid-run)

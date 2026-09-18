@@ -4,6 +4,10 @@
 
 - `/duet` in Claude Code and Codex, installed by `duet skill install`, carrying the
   conversation you are already in across to both agents as context.
+- `duet resume` — continue an interrupted session instead of starting over, keeping
+  the issue ledger, both sign-offs and the round numbering.
+- `duet review --since <ref>` — review everything a branch adds, not just uncommitted
+  changes, which is what "review my branch" actually means.
 - `duet status` — what a session is doing right now, read from the event log so it
   works mid-run.
 - `duet review` — a one-shot second opinion on the working-tree diff, with the reviewer

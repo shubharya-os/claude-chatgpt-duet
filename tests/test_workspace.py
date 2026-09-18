@@ -114,3 +114,41 @@ def test_a_symlink_is_not_followed_when_hashing(tmp_path):
     ws = Workspace(str(tmp_path))
     assert ws.digest()            # does not raise, does not read through
     outside.unlink()
+
+
+def test_reviewing_a_branch_sees_committed_work(tmp_path):
+    """`duet review` on a branch you have already committed found nothing,
+    because it only looked at the working tree — which is the normal state when
+    you want a review."""
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "base.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    _git(tmp_path, "branch", "trunk")
+
+    (tmp_path / "feature.py").write_text("def thing():\n    return 2\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "the feature")
+
+    ws = Workspace(str(tmp_path))
+    assert "no changes" in ws.diff().lower() or "no uncommitted" in ws.diff().lower() \
+        or ws.diff().startswith("(git")          # working tree is clean
+    branch = ws.diff_since("trunk")
+    assert "feature.py" in branch and "def thing" in branch
+
+
+def test_reviewing_against_a_ref_that_does_not_exist_says_so(tmp_path):
+    _git(tmp_path, "init", "-q")
+    assert "no such ref" in Workspace(str(tmp_path)).diff_since("nope")
+
+
+def test_reviewing_against_a_ref_with_nothing_new(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "a.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "one")
+    assert "does not already have" in Workspace(str(tmp_path)).diff_since("HEAD")

@@ -1317,7 +1317,8 @@ def cmd_review(args: argparse.Namespace) -> int:
     # The change is read before the gate runs. A gate is free to write files
     # (coverage data, build output), and a view taken afterwards would show the
     # reviewer artefacts nobody wrote.
-    change = ws.diff(limit=REVIEW_DIFF_CHARS)
+    since = getattr(args, "since", None)
+    change = ws.diff_since(since, limit=REVIEW_DIFF_CHARS) if since else ws.diff(limit=REVIEW_DIFF_CHARS)
     is_git = ws.is_git_repo
     # Two different kinds of incomplete, kept apart: the diff itself hit the
     # character limit, or some new file did not fit. `truncated` is the union —
@@ -1331,6 +1332,10 @@ def cmd_review(args: argparse.Namespace) -> int:
     if change.strip() in NOTHING_TO_REVIEW:
         if not as_json:
             print(ui.bold("duet review") + "  " + ui.dim(root))
+            if since:
+                print(ui.yellow("nothing to review") + " — nothing on this branch that %s does not have." % since)
+                print(ui.dim("  try another ref:  ") + ui.bold("duet review --since <branch-or-commit>"))
+                return REVIEW_NOTHING
             print(ui.yellow("nothing to review") + " — " + (
                 "the working tree matches HEAD." if is_git else "the workspace is empty."))
             print(ui.dim("make a change first, or point at another directory with -C."))
@@ -1612,6 +1617,9 @@ def build_parser() -> argparse.ArgumentParser:
                           help="who reviews (default: the one that does not normally lead)")
     p_review.add_argument("--pair", metavar="A+B",
                           help="which two agents to choose the reviewer from (default: %s)" % DEFAULT_PAIR)
+    p_review.add_argument("--since", metavar="REF",
+                          help="review everything this branch has that REF does not, "
+                               "instead of the uncommitted working tree (e.g. --since main)")
     p_review.add_argument("--gate", metavar="CMD",
                           help="run this first and show the reviewer its output, e.g. \"pytest -q\"")
     p_review.set_defaults(func=cmd_review)
