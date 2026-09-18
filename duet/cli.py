@@ -168,7 +168,31 @@ def build_config(args: argparse.Namespace) -> Config:
     return cfg
 
 
+def refuse_nested(command: str, args: argparse.Namespace) -> Optional[int]:
+    """Stop a duet agent from starting another duet session.
+
+    Agents reach for the tools they are told about, and duet is one of them. A
+    nested session means the outer agent's turn blocks on a whole second pair of
+    agents — which in a real run hit the 30-minute adapter timeout and threw away
+    the turn. Reviewing is allowed; running a full session is not.
+    """
+    session = os.environ.get("DUET_SESSION")
+    if not session or getattr(args, "allow_nested", False):
+        return None
+    print(ui.red("refusing to start a duet session from inside one") + ui.dim(" (%s)" % session))
+    print("  You are already an agent in a duet session. Starting another one makes")
+    print("  this turn wait on a second pair of agents, which is slow enough to time")
+    print("  out and costs twice over.")
+    print()
+    print("  Do the work yourself and report it in your envelope.")
+    print(ui.dim("  If you really mean it: ") + ui.bold("duet %s --allow-nested" % command))
+    return 4
+
+
 def cmd_run(args: argparse.Namespace) -> int:
+    nested = refuse_nested("run", args)
+    if nested is not None:
+        return nested
     task = read_task(args)
     if not task.strip():
         print(ui.red("no task given."))
@@ -1108,6 +1132,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--decider", help="who rules on deadlocked issues")
     p_run.add_argument("--swap", type=int, help="swap lead/reviewer every N rounds (0 = never)")
     p_run.add_argument("--commit", action="store_true", help="git-commit the result when both sign off")
+    p_run.add_argument("--allow-nested", action="store_true",
+                       help="permit starting this from inside another duet session")
     p_run.set_defaults(func=cmd_run)
 
     p_doctor = sub.add_parser("doctor", help="check that both agents are reachable")

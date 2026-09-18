@@ -369,3 +369,44 @@ def test_allowing_the_gate_ignores_a_leading_env_assignment(tmp_path):
 def test_an_adapter_without_permissions_ignores_the_gate(tmp_path):
     agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
     agent.allow_gate("pytest -q")      # codex has its own sandbox; nothing to do
+
+
+def test_a_transient_sign_in_blip_is_confirmed_before_being_believed(tmp_path):
+    """A live session lost a whole round to a 'not logged in' from codex whose
+    login was fine before and after. Check the real state before giving up."""
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", r'''
+for a in "$@"; do
+  if [ "$a" = "status" ]; then echo "Logged in using ChatGPT"; exit 0; fi
+done
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; fi
+  shift
+done
+if [ -f /tmp/duet-blip-done ]; then
+  printf '%s' '{"message":"second attempt worked","verdict":"DONE"}' > "$out"; exit 0
+fi
+touch /tmp/duet-blip-done
+echo "Not logged in" >&2; exit 1
+''')
+    import os
+    try:
+        os.path.exists("/tmp/duet-blip-done") and os.unlink("/tmp/duet-blip-done")
+    except OSError:
+        pass
+    agent.turns = 1                       # so there are two attempts to make
+    reply = agent.send("go")
+    try:
+        os.unlink("/tmp/duet-blip-done")
+    except OSError:
+        pass
+    assert reply.ok, reply.error
+    assert "second attempt worked" in reply.text
+
+
+def test_a_real_sign_out_is_still_reported(tmp_path):
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", 'echo "Not logged in" >&2; exit 1')
+    reply = agent.send("go")
+    assert not reply.ok and "codex login" in reply.error

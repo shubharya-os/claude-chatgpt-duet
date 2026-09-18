@@ -116,7 +116,18 @@ class CodexCliAdapter(Adapter):
                 stdout = (proc.stdout or "").strip()
                 combined = (stdout + "\n" + (proc.stderr or "")).strip()
                 if "not logged in" in combined.lower():
-                    return AgentReply(text="", error="codex is not signed in. Run: %s" % LOGIN_HINT)
+                    # Confirm it before believing it. A blip that happens to say
+                    # this once cost a whole round in a real session, and the
+                    # login was fine before and after.
+                    logged_in, detail = read_login_status(self.bin)
+                    if logged_in is False:
+                        return AgentReply(
+                            text="", error="codex is not signed in. Run: %s" % LOGIN_HINT
+                        )
+                    last_error = ("codex reported a sign-in problem, but `codex login "
+                                  "status` says %s. Treating it as transient: %s"
+                                  % (detail, combined[:300]))
+                    continue
 
                 final = ""
                 try:

@@ -104,6 +104,47 @@ translates the gate into `--allowedTools "Bash(pytest:*)"` for exactly the gate'
 executables, and nothing wider. Leading `VAR=value` assignments are stepped over, and
 `&&`-joined gates grant each command.
 
+## duet built `duet review`
+
+A second full two-agent session, in a git worktree so it could not collide with work
+happening on `main`. Claude Code led, ChatGPT reviewed, gate was the test suite. Four
+rounds, consensus, 29 new tests.
+
+The design call was one the task did not ask for. The agent decided that telling a
+reviewer "review only, do not edit" **in the prompt is not a control**, and enforced it
+per backend instead — `--disallowedTools Edit Write MultiEdit NotebookEdit` on the
+Claude side, `--sandbox read-only` on the ChatGPT side — while still checking the
+workspace afterwards, because a backend that cannot enforce returns `""` rather than a
+false assurance.
+
+Round 3 it re-read its own work instead of assuming it was finished, and found three
+real defects, each fixed with a test that fails without the fix. The first is the kind
+of thing only a careful reader catches: `untracked_files()` used `git status
+--porcelain`, which escapes non-ASCII paths and wraps them in quotes, so a new file with
+an accented name reached the reviewer as a name with no body. It switched to
+`--porcelain -z`, which is never quoted and also survives spaces and newlines.
+
+**Checked afterwards, not taken on trust:** the reviewer prompt contains no mention of
+consensus, DONE votes, sign-off or a peer (the acceptance criterion). A real run against
+a deliberately broken cache module found the planted bug — a dict mutated during
+iteration in `clear_expired` — named the line, explained the `RuntimeError` it raises,
+proposed two fixes, and exited 1.
+
+### What that run exposed
+
+Both agents failed once mid-session, and the loop survived both — but both were real
+defects worth fixing:
+
+1. **An agent started a nested duet session.** Testing its own `duet review` meant
+   invoking it, which spawned a second pair of agents; the outer turn then waited on the
+   whole nested session and hit the 30-minute adapter timeout, losing the turn. duet now
+   marks the environment with `DUET_SESSION` and refuses to start a session from inside
+   one, unless `--allow-nested` is passed.
+2. **A transient blip was read as a sign-out.** One `codex exec` printed "not logged in"
+   in a session whose login was verified fine immediately before and after, and the
+   adapter believed it and burned the round. It now confirms with `codex login status`
+   before giving up, and treats an unconfirmed report as a retryable error.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,

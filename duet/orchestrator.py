@@ -7,6 +7,7 @@ Nothing ends until both of them sign the same state.
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -299,6 +300,11 @@ class Orchestrator:
     def run(self) -> SessionResult:
         cfg = self.config
         order = cfg.order()
+        # Children inherit this, and the CLI refuses to start a session when it
+        # is set. An agent that invokes duet spawns another pair of agents, and
+        # the outer turn then waits on the whole nested session: in a real run
+        # that cost a 30-minute adapter timeout and produced no envelope.
+        os.environ["DUET_SESSION"] = self.session_id
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.emit(
             "session_start",
@@ -376,6 +382,7 @@ class Orchestrator:
             gate=gate,
             session_dir=str(self.session_dir),
         )
+        os.environ.pop("DUET_SESSION", None)
         result.report = self.write_report(result)
         self._save(result)
         if status == STATUS_CONSENSUS and cfg.commit:

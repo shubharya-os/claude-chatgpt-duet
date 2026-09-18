@@ -231,3 +231,47 @@ def test_the_skill_declares_what_it_triggers_on():
     assert "name: duet" in header
     assert "description:" in header
     assert "second opinion" in header.lower()
+
+
+def test_an_agent_cannot_start_another_duet_session(monkeypatch, tmp_path):
+    """A nested session makes the outer agent's turn wait on a whole second pair
+    of agents. In a real run that hit the 30-minute adapter timeout and threw the
+    turn away, so the CLI refuses unless asked twice."""
+    import argparse
+
+    from duet.cli import main, refuse_nested
+
+    monkeypatch.setenv("DUET_SESSION", "outer-session")
+    assert main(["run", "do a thing", "-C", str(tmp_path)]) == 4
+
+    # Without the marker the guard stands aside. Checked directly rather than by
+    # calling `run`, which would go on to start a real session with real agents.
+    monkeypatch.delenv("DUET_SESSION")
+    args = argparse.Namespace(allow_nested=False)
+    assert refuse_nested("run", args) is None
+
+    # and an explicit --allow-nested overrides it
+    monkeypatch.setenv("DUET_SESSION", "outer-session")
+    assert refuse_nested("run", argparse.Namespace(allow_nested=True)) is None
+
+
+def test_a_session_marks_the_environment_for_its_children(tmp_path):
+    """The guard only works if children can see they are inside a session."""
+    import os
+
+    seen = {}
+
+    class Nosy(MockAdapter):
+        def send(self, prompt, system="", round_no=0):
+            seen["marker"] = os.environ.get("DUET_SESSION")
+            return super().send(prompt, system, round_no)
+
+    cfg = Config(task="t", root=str(tmp_path), max_rounds=2,
+                 agents=[AgentSpec("claude", "mock"), AgentSpec("gpt", "mock")])
+    orch = Orchestrator(cfg, adapters={
+        "claude": Nosy(name="claude", cwd=str(tmp_path), config={"script": [DONE]}),
+        "gpt": MockAdapter(name="gpt", cwd=str(tmp_path), config={"script": [DONE]}),
+    })
+    orch.run()
+    assert seen["marker"] == orch.session_id
+    assert os.environ.get("DUET_SESSION") is None      # and cleaned up afterwards
