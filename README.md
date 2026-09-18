@@ -1,5 +1,9 @@
 # duet
 
+[![ci](https://github.com/shubharya-os/claude-chatgpt-duet/actions/workflows/ci.yml/badge.svg)](https://github.com/shubharya-os/claude-chatgpt-duet/actions/workflows/ci.yml)
+[![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Stop copy-pasting between ChatGPT and Claude Code.**
 
 You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
