@@ -51,7 +51,8 @@ git clone https://github.com/OWNER/duet && cd duet
 pip install .           # or: pipx install .
 ```
 
-If `duet` is not on your PATH afterwards, `python3 -m duet` is always equivalent.
+Verified down to Python 3.9 with pip 21.2 and setuptools 58. If `duet` is not on
+your PATH afterwards, `python3 -m duet` is always equivalent.
 
 Then connect each side.
 
@@ -289,7 +290,7 @@ Worth knowing before you rely on it:
 ## Development
 
 ```bash
-pip install -e . pytest   # editable installs need pip >= 21.3
+pip install -e . pytest   # editable needs pip >= 21.3 and setuptools >= 61
 pytest -q                 # 57 tests, no keys and no network required
 duet demo                 # the orchestrator end to end against scripted peers
 ```
