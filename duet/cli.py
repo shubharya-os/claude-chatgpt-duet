@@ -420,9 +420,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
     result = orch.run()
     if not args.json:
         print()
-        print(ui.dim("demo workspace: %s" % root))
         print(ui.dim("that was the real orchestrator with scripted peers — "
                      "same envelopes, same gate, same double sign-off."))
+        print(ui.dim("demo workspace: %s" % root))
+        print(ui.dim("see the whole argument:  ") + ui.bold("duet report --transcript -C %s" % root))
     return 0 if result.status == STATUS_CONSENSUS else 1
 
 

@@ -313,6 +313,20 @@ Worth knowing before you rely on it:
 
 ---
 
+## Has this actually been run?
+
+Yes, and [docs/QA.md](docs/QA.md) is the honest record: what ran live, what is only
+covered by stubs, and the six real bugs the live runs found — including a signed-out
+CLI that reported itself ready, and a `codex exec` that hung forever whenever stdin
+was an inherited pipe.
+
+The ChatGPT half has been verified end to end against the real Codex CLI on a ChatGPT
+login: it built the file, answered the reviewer's objection, used `resolves`
+correctly, and signed off on the same state as its peer — with a valid envelope on
+every turn. The Claude half's flags and parsing are pinned by tests against a stub
+binary; its live round trip needs an interactive sign-in only the account holder can
+complete.
+
 ## Development
 
 ```bash
