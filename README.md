@@ -6,6 +6,8 @@
 
 **Stop copy-pasting between ChatGPT and Claude Code.**
 
+<img src="docs/session.svg" alt="A duet session: Claude Code and ChatGPT taking turns until both sign off" width="760">
+
 You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
 what Claude built. Paste it back to ChatGPT. "Looks good, but you missed the error
 case." Paste that into Claude Code. Repeat until you get bored and ship it.
