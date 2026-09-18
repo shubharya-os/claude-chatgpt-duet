@@ -264,3 +264,133 @@ HANDOFF_DIRECTIVE = """\
 Your peer has raised something against you and voted {verdict}. Answer it
 directly before you do anything else.
 """
+
+
+# --------------------------------------------------------------------------
+# `duet review`: one agent, one pass, no debate.
+#
+# Deliberately not built on the prompts above. There is no second agent here and
+# nothing to agree on, so every instruction about voting, signing off, answering
+# an objection or not thrashing a peer's work would be describing a situation
+# the reviewer is not in.
+# --------------------------------------------------------------------------
+_REVIEW_IDENTITY = """\
+You are {display}, working as `{name}`.
+
+You are giving a second opinion on a change in the workspace at {root}. You get
+one pass. Nobody will argue with you afterwards and nothing you say has to be
+negotiated — the person who asked for this reads your findings and acts on them.
+
+{edit_channel}
+
+What a useful review does:
+- Checks the change against the task it was meant to do, end to end. Say so if it
+  does not actually do what was asked.
+- Looks for what breaks: wrong results, unhandled failure, bad input, a case the
+  change forgot, something left stubbed or hardcoded. Read the code that is
+  there, not the code you would have written.
+- Names each problem specifically enough to fix: which file, which case, and what
+  would fix it.
+- Reports nothing when there is nothing to report. Inventing a finding to look
+  thorough is as bad as waving through something broken.
+- Leaves taste alone. A style you merely disagree with is not a finding.
+"""
+
+_REVIEW_WITH_TOOLS = """\
+You have your own tools. Read the files around the change, and run whatever helps
+you check it — the change is on disk, so you do not have to review it from the
+diff alone. Do not modify the workspace: this is a review. Report what you ran
+and what it said."""
+
+_REVIEW_NO_TOOLS = """\
+You have no tools in this workspace, so review what is in this prompt: the change
+itself, the task, and any command output shown below it. If something you need to
+be sure about is not here, say what you could not check instead of guessing."""
+
+REVIEW_ENVELOPE_SPEC = """\
+End your reply with exactly one fenced JSON envelope. Prose above it is for a
+human to read; the envelope is what the tool prints and exits on.
+
+```json
+{
+  "message": "your overall read of this change, in a few sentences",
+  "issues": [
+    {"id": "kebab-case-id", "title": "one line", "severity": "blocker|major|minor",
+     "detail": "what is wrong, when it goes wrong, and what would fix it"}
+  ],
+  "summary": "one line",
+  "confidence": 0.0
+}
+```
+
+- `severity`: `blocker` — this must not ship as it is; `major` — a real defect
+  that should be fixed before the change lands; `minor` — worth fixing, not worth
+  holding the change for.
+- Raise an issue only if you can say what would fix it. Vague unease is noise.
+- An empty `issues` list is a real answer. Send it when the change holds up.
+- One issue per problem, and put the reasoning in `detail`, not in the title.
+"""
+
+REVIEW_DIRECTIVE = """\
+Go through the change and report what you find.
+1. Read it against the task. Name anything that does not do what was asked, and
+   anything the task asked for that is missing.
+2. Look for defects: wrong behaviour, unhandled errors, missing cases, anything
+   unsafe or left unfinished.
+3. Give every finding a severity and a fix.
+4. If the change holds up, say so and return an empty `issues` list.
+"""
+
+
+def review_system_prompt(*, name: str, display: str, root: str, edits_workspace: bool) -> str:
+    return (
+        _REVIEW_IDENTITY.format(
+            display=display,
+            name=name,
+            root=root,
+            edit_channel=_REVIEW_WITH_TOOLS if edits_workspace else _REVIEW_NO_TOOLS,
+        )
+        + "\n"
+        + REVIEW_ENVELOPE_SPEC
+    )
+
+
+NO_TASK_RECORDED = (
+    "(not recorded — review the change on its own terms: is it correct, complete\n"
+    "and safe, and does it hold together with the code around it?)"
+)
+
+
+def review_prompt(
+    *,
+    task: str,
+    acceptance: str,
+    change_title: str,
+    change: str,
+    gate_text: str = "",
+    new_files: Optional[Dict[str, str]] = None,
+    truncated: bool = False,
+) -> str:
+    parts: List[str] = [
+        "=== SECOND OPINION REQUESTED ===\n"
+        "One pass over the change below. Findings only — this is the whole exchange."
+    ]
+    parts.append("\n=== THE TASK THIS CHANGE WAS MEANT TO DO ===\n%s" % (task.strip() or NO_TASK_RECORDED))
+    if acceptance.strip():
+        parts.append("\n=== ACCEPTANCE CRITERIA ===\n%s" % acceptance.strip())
+    parts.append("\n=== %s ===\n%s" % (change_title, change))
+    if truncated:
+        parts.append(
+            "\n!!! The text above was too long to send in full and was cut short. You are\n"
+            "not looking at the whole change. Open the files yourself if you can; if you\n"
+            "cannot, say which parts you were unable to see rather than passing them."
+        )
+    for path, body in (new_files or {}).items():
+        parts.append("\n=== NEW FILE: %s ===\n%s" % (path, body))
+    if gate_text.strip():
+        parts.append(
+            "\n=== COMMAND RUN AGAINST THIS CHANGE ===\n%s\n"
+            "(run by the tool, not by whoever wrote the change)" % gate_text.strip()
+        )
+    parts.append("\n=== YOUR REVIEW ===\n%s" % REVIEW_DIRECTIVE)
+    return "\n".join(parts)

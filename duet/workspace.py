@@ -13,7 +13,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 SKIP_DIRS = {
     ".git", ".duet", "__pycache__", "node_modules", ".venv", "venv",
@@ -127,6 +127,33 @@ class Workspace:
     def short_digest(self) -> str:
         return self.digest()[:8]
 
+    def fingerprint(self) -> Dict[str, str]:
+        """One hash per file, so a caller can tell *which* files moved.
+
+        `digest()` answers "is this the same workspace"; this answers "and if
+        not, what changed" — which is the difference between blaming an agent
+        for a whole tree and naming the two files it touched.
+        """
+        out: Dict[str, str] = {}
+        for path in self.tracked_files():
+            rel = path.relative_to(self.root).as_posix()
+            h = hashlib.sha256()
+            try:
+                if path.is_symlink():
+                    h.update(b"symlink:")
+                    h.update(os.readlink(str(path)).encode("utf-8", "replace"))
+                else:
+                    with path.open("rb") as fh:
+                        while True:
+                            chunk = fh.read(DIGEST_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            h.update(chunk)
+            except OSError as exc:
+                h.update(("unreadable:%s" % exc).encode())
+            out[rel] = h.hexdigest()[:16]
+        return out
+
     # -- observation ------------------------------------------------------
     def _git(self, *args: str) -> Tuple[int, str]:
         try:
@@ -145,6 +172,27 @@ class Workspace:
     def is_git_repo(self) -> bool:
         code, out = self._git("rev-parse", "--is-inside-work-tree")
         return code == 0 and out.strip() == "true"
+
+    def untracked_files(self) -> List[str]:
+        """Paths git has never seen. New work lives here and in no diff.
+
+        duet's own `.duet/` bookkeeping is filtered out. A leftover session
+        transcript is not part of anybody's change, and counting it as one made
+        an unchanged working tree look like work.
+        """
+        if not self.is_git_repo:
+            return []
+        # -z, not lines: by default git escapes any path that is not plain ASCII
+        # and wraps it in quotes, and an escaped name resolves to nothing on
+        # disk — so the file reached a reviewer as a name with no body. The NUL
+        # form is never quoted, and it survives spaces and newlines too.
+        code, status = self._git("status", "--porcelain", "-z", "--untracked-files=all")
+        if code != 0:
+            return []
+        paths = [entry[3:] for entry in status.split("\0") if entry.startswith("?? ")]
+        return [p for p in paths if p.split("/")[0] not in (".duet", ".git")]
+
+    TRIM_MARKER = "...[trimmed at"
 
     def diff(self, limit: int = 12000) -> str:
         """What the peer needs to review: the change, not the whole repo.
@@ -165,22 +213,18 @@ class Workspace:
         if code == 0 and body.strip():
             parts.append(body.strip())
 
-        code, status = self._git("status", "--porcelain", "--untracked-files=all")
-        if code == 0:
-            new_files = [
-                line[3:].strip() for line in status.splitlines() if line.startswith("??")
-            ]
-            if new_files:
-                listing = ["NEW FILES (untracked, not shown in the diff above):"]
-                for rel in new_files[:80]:
-                    try:
-                        size = (self.root / rel).stat().st_size
-                    except OSError:
-                        size = -1
-                    listing.append("  %8d  %s" % (size, rel))
-                if len(new_files) > 80:
-                    listing.append("  ...and %d more" % (len(new_files) - 80))
-                parts.append("\n".join(listing))
+        new_files = self.untracked_files()
+        if new_files:
+            listing = ["NEW FILES (untracked, not shown in the diff above):"]
+            for rel in new_files[:80]:
+                try:
+                    size = (self.root / rel).stat().st_size
+                except OSError:
+                    size = -1
+                listing.append("  %8d  %s" % (size, rel))
+            if len(new_files) > 80:
+                listing.append("  ...and %d more" % (len(new_files) - 80))
+            parts.append("\n".join(listing))
 
         if not parts:
             return "(git: no changes against HEAD)"
@@ -203,6 +247,13 @@ class Workspace:
         return body[:limit]
 
     def read(self, rel_path: str, limit: int = 20000) -> str:
+        """The file's text, or a short description of why there is none.
+
+        The answer goes straight into a prompt, so a failure has to read as
+        prose. Callers that need to *decide* something use `read_or_none`: a
+        file whose own contents look like one of these messages is otherwise
+        indistinguishable from a missing one.
+        """
         try:
             target = self.resolve(rel_path)
         except PatchRejected as exc:
@@ -213,6 +264,19 @@ class Workspace:
             return target.read_text(encoding="utf-8", errors="replace")[:limit]
         except OSError as exc:
             return "<unreadable: %s>" % exc
+
+    def read_or_none(self, rel_path: str, limit: int = 20000) -> Optional[str]:
+        """The file's text, or None if it cannot be read. No prose in the answer."""
+        try:
+            target = self.resolve(rel_path)
+        except PatchRejected:
+            return None
+        if not target.is_file():
+            return None
+        try:
+            return target.read_text(encoding="utf-8", errors="replace")[:limit]
+        except OSError:
+            return None
 
     # -- mutation ---------------------------------------------------------
     def apply_patches(self, patches: Sequence) -> List[str]:
@@ -276,6 +340,12 @@ class Workspace:
             exit_code=proc.returncode,
             output=output,
         )
+
+
+def changed_paths(before: Dict[str, str], after: Dict[str, str]) -> List[str]:
+    """Every path added, removed or rewritten between two fingerprints."""
+    both = set(before) & set(after)
+    return sorted(set(before) ^ set(after) | {p for p in both if before[p] != after[p]})
 
 
 def quote(command: Sequence[str]) -> str:

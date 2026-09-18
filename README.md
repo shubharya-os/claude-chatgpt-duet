@@ -17,12 +17,43 @@ quietly agree they're finished.
 ```bash
 pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
 duet login                                        # your Claude and ChatGPT plans, no API keys
+
+duet review --gate "pytest -q"                    # ChatGPT reviews what Claude Code just did
 duet run "fix the retry logic" --gate "pytest -q" # both of them, until they agree
 ```
 
 ---
 
-## What it does
+## The two things it does
+
+### `duet review` — a second opinion, one command
+
+The cheap one. It shows the other model your working-tree diff, the contents of any new
+files git has not seen, and — with `--gate` — your test output, then prints what it
+objects to. One call, no loop. The reviewer is held read-only by its backend, not asked
+politely: `--disallowedTools Edit Write …` on the Claude side, `--sandbox read-only` on
+the ChatGPT side.
+
+```
+$ duet review --gate "pytest -q"
+duet review  ~/code/loader
+  reviewer:  chatgpt  ChatGPT (Codex) (codex-cli), sandbox read-only
+  gate:      pytest -q  passed
+
+major (1)
+  [clear-expired-mutates-during-iteration] clear_expired raises while deleting entries
+      clear_expired() iterates self._entries.items() and deletes from self._entries
+      inside that same loop, so Python raises RuntimeError: dictionary changed size
+      during iteration. Iterate over a snapshot, e.g. list(self._entries.items()).
+
+1 finding (1 major)
+blocking: this change should not ship as it is.
+```
+
+That is a real finding from a real run — exit 1, because something blocking was raised.
+Use it before you push.
+
+### `duet run` — both of them, until they agree
 
 They take turns in your repo: one builds, the other reviews, they argue, they fix. It
 ends when **both** vote DONE on the **same state of the workspace**, with no open
@@ -127,8 +158,9 @@ duet skill install
 
 That installs a skill, so in any Claude Code session you can just say:
 
+> "get a second opinion on this from ChatGPT"
+> "have ChatGPT review the diff before I push"
 > "work on this with ChatGPT until you both agree"
-> "have ChatGPT check this before I push"
 
 Claude Code runs duet, reads the report, and tells you which objections it thinks are
 right — it's allowed to disagree with the reviewer, and it will say so.
@@ -212,6 +244,7 @@ all, the stall is detected and both are told to break it.
 ## Commands
 
 ```bash
+duet review          # one-shot second opinion on the current diff
 duet run "task"      # the full loop until both sign off
 duet verify          # does the last sign-off still hold? re-runs the gate
 duet login           # sign both sides in
@@ -235,7 +268,7 @@ Useful flags for `run`: `--gate` (your tests — the most valuable one), `--pair
 - Claude Code runs under `acceptEdits`, not a blanket bypass, and is granted Bash for
   your gate's own commands and nothing wider.
 - **Two agents cost roughly twice one agent, times the rounds.** `--rounds` is the
-  throttle; the default of 12 is deliberately modest.
+  throttle; the default of 12 is deliberately modest. `duet review` is a single call.
 - duet holds no credentials. Each CLI owns its own sign-in.
 
 ---

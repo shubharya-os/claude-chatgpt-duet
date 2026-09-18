@@ -59,6 +59,11 @@ class CodexCliAdapter(Adapter):
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
         self.turns = 0
 
+    def read_only(self) -> str:
+        """Codex has a sandbox for exactly this; use it instead of asking."""
+        self.sandbox = "read-only"
+        return "sandbox read-only"
+
     def _base(self, last_message_file: str) -> List[str]:
         # --color never keeps ANSI escapes out of anything we parse; -o gives us
         # the agent's final message verbatim instead of scraped from the log.

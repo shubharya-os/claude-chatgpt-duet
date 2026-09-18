@@ -60,6 +60,16 @@ class Adapter:
         """
         return None
 
+    def read_only(self) -> str:
+        """Stop this agent writing to the workspace, if the backend can.
+
+        `duet review` asks for an opinion, not an edit, and asking politely in
+        the prompt is not a control. Returns a short description of what was
+        actually enforced, or "" when the backend cannot enforce anything — the
+        caller checks the workspace afterwards either way.
+        """
+        return "" if self.edits_workspace else "no tools in this workspace"
+
     @classmethod
     def probe(cls, config: Optional[Dict[str, Any]] = None) -> Probe:
         return Probe(ok=False, detail="no probe implemented for %s" % cls.backend)
