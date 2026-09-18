@@ -11,7 +11,7 @@ open objection and the acceptance gate green.
 Either one can lead. Either one can say no. Neither one can finish alone.
 
 ```bash
-git clone https://github.com/diablo69-contri/duet && cd duet
+git clone https://github.com/shubharya-os/duet && cd duet
 pip install .
 duet doctor          # checks both sides are connected
 duet demo            # runs the whole loop with no keys and no network
@@ -47,7 +47,7 @@ what the builder's blind spot produced, because it is a different blind spot.
 **Requirements:** Python 3.9+, and both sides connected.
 
 ```bash
-git clone https://github.com/diablo69-contri/duet && cd duet
+git clone https://github.com/shubharya-os/duet && cd duet
 pip install .           # or: pipx install .
 ```
 
