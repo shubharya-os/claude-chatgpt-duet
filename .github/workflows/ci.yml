@@ -20,6 +20,11 @@ jobs:
       - run: pip install -e . pytest
       - name: tests
         run: pytest -q
+      - name: a plain install provides the duet command
+        run: |
+          python -m venv /tmp/plain
+          /tmp/plain/bin/pip install --quiet .
+          /tmp/plain/bin/duet --version
       - name: the loop runs end to end
         run: duet demo --quiet
       - name: doctor reports honestly with nothing connected

@@ -33,6 +33,8 @@ if command -v pipx >/dev/null 2>&1; then
   pipx install --force "$DIR"
 else
   say "installing with pip (--user)"
+  # old pip installs the package without its entry point; upgrade first
+  "$PY" -m pip install --user --quiet --upgrade pip >/dev/null 2>&1 || true
   "$PY" -m pip install --user --upgrade "$DIR"
 fi
 

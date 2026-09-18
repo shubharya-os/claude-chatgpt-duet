@@ -12,7 +12,7 @@ Either one can lead. Either one can say no. Neither one can finish alone.
 
 ```bash
 git clone https://github.com/OWNER/duet && cd duet
-pip install -e .
+pip install .
 duet doctor          # checks both sides are connected
 duet demo            # runs the whole loop with no keys and no network
 duet run "add retry with backoff to src/fetch.py, and a test that proves it" --gate "pytest -q"
@@ -48,8 +48,10 @@ what the builder's blind spot produced, because it is a different blind spot.
 
 ```bash
 git clone https://github.com/OWNER/duet && cd duet
-pip install -e .        # or: pipx install .
+pip install .           # or: pipx install .
 ```
+
+If `duet` is not on your PATH afterwards, `python3 -m duet` is always equivalent.
 
 Then connect each side.
 
@@ -287,7 +289,7 @@ Worth knowing before you rely on it:
 ## Development
 
 ```bash
-pip install -e . pytest
+pip install -e . pytest   # editable installs need pip >= 21.3
 pytest -q                 # 57 tests, no keys and no network required
 duet demo                 # the orchestrator end to end against scripted peers
 ```
