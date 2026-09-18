@@ -2,7 +2,7 @@
 # duet installer — installs the CLI, then tells you exactly what is still missing.
 set -e
 
-REPO_URL="${DUET_REPO:-https://github.com/OWNER/duet}"
+REPO_URL="${DUET_REPO:-https://github.com/diablo69-contri/duet}"
 DIR="${DUET_DIR:-$HOME/.duet-src}"
 
 say() { printf '%s\n' "$*"; }

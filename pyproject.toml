@@ -14,8 +14,8 @@ keywords = ["claude-code", "chatgpt", "openai", "codex", "agents", "pair-program
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/OWNER/duet"
-Issues = "https://github.com/OWNER/duet/issues"
+Homepage = "https://github.com/diablo69-contri/duet"
+Issues = "https://github.com/diablo69-contri/duet/issues"
 
 [project.scripts]
 duet = "duet.cli:main"
