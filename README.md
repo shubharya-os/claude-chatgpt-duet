@@ -145,14 +145,43 @@ Other flags worth knowing:
 
 And the rest of the commands:
 
-```bash
-duet login                 # sign both sides in (or `duet login claude` for one)
-duet demo                  # the full loop, scripted peers, no keys, no network
-duet doctor                # real login check, with the exact fix per side
-duet sessions              # every session in this workspace
-duet report                # the last session's report
-duet report --transcript   # everything both of them actually said
+| command | what it does |
+|---|---|
+| `duet run "..."` | run a session (see the flags above) |
+| `duet login` | sign both sides in (or `duet login claude` for one) |
+| `duet demo` | the full loop, scripted peers, no keys, no network |
+| `duet doctor` | real login check, with the exact fix per side |
+| `duet init` | write `.duet/config.json` and check the setup |
+| `duet sessions` | every session in this workspace |
+| `duet report` | the last session's report (`--transcript` for everything both of them said) |
+| `duet verify` | re-run the gate now and check the last sign-off still describes this workspace |
+
+`duet verify` is the one to run later — on a fresh clone, in CI, or a month after the
+session. It re-computes the workspace state id, compares it with the one both agents
+signed, re-runs that session's acceptance gate, and prints all three:
+
 ```
+duet verify  /work/repo
+  session:   20260919-000120-3a8c  outcome: consensus
+  signed:    809799b2a1c4d5e6  (claude r3, gpt r4)
+  now:       809799b2a1c4d5e6
+  match:     yes
+  gate:      pytest -q  passed
+
+the sign-off still holds. gate re-run and green.
+```
+
+It exits `0` only if the state still matches *and* the gate passes, `1` if the
+workspace drifted, the gate broke, or that session never reached a double sign-off,
+and `2` if there is no recorded session to check against. `duet verify --json` prints
+the same facts as one JSON object; `duet verify <session-id>` checks an older one, and
+`--gate "..."` checks against a different command than the session recorded.
+
+One caveat before you put it in CI: if the session itself ran without a `--gate`, there
+is no command to re-run, and `verify` exits `0` on the state match alone. It says so on
+the last line rather than printing a green "passed" it did not earn, and `--json` reports
+`"gate": {"skipped": true}` — but an exit code cannot say it, so check that field, or
+pass `--gate "..."` to hold an old session to a command it never had.
 
 ---
 
@@ -320,12 +349,21 @@ covered by stubs, and the six real bugs the live runs found — including a sign
 CLI that reported itself ready, and a `codex exec` that hung forever whenever stdin
 was an inherited pipe.
 
-The ChatGPT half has been verified end to end against the real Codex CLI on a ChatGPT
-login: it built the file, answered the reviewer's objection, used `resolves`
-correctly, and signed off on the same state as its peer — with a valid envelope on
-every turn. The Claude half's flags and parsing are pinned by tests against a stub
-binary; its live round trip needs an interactive sign-in only the account holder can
-complete.
+**duet built part of itself.** The `duet verify` command in the table above was
+written by duet: real Claude Code leading, real ChatGPT reviewing, inside this
+repository, gated by the full test suite. Four rounds to consensus.
+
+The run is worth reading because of round 3. ChatGPT had already approved the work.
+Claude, given the final-check turn, found a sentence **in its own README** that was
+not true — `verify` would exit 0 on a session recorded without a gate, having run
+nothing, and CI reads exit codes rather than prose. It fixed that, which moved the
+workspace state id, which voided ChatGPT's approval, which forced a fourth round
+where ChatGPT re-reviewed and re-signed. Neither agent could have ended it alone,
+and the second sign-off was not a formality.
+
+That run also exposed a real flaw: Claude was launched with `acceptEdits`, so it
+could write files but not run the tests, and was reviewing on the harness's word.
+duet now grants Bash for the gate's own executables and nothing else.
 
 ## Development
 

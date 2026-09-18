@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -71,6 +72,7 @@ class ClaudeCodeAdapter(Adapter):
         self.timeout = int(self.config.get("timeout", 1800))
         self.permission_mode = self.config.get("permission_mode", "acceptEdits")
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
+        self.allowed_tools: List[str] = list(self.config.get("allowed_tools") or [])
 
     def _command(self, prompt: str, system: str) -> List[str]:
         cmd = [self.bin, "-p", prompt, "--output-format", "json"]
@@ -84,8 +86,29 @@ class ClaudeCodeAdapter(Adapter):
             cmd += ["--append-system-prompt", system]
         if self.session_id:
             cmd += ["--resume", self.session_id]
+        if self.allowed_tools:
+            cmd += ["--allowedTools", " ".join(self.allowed_tools)]
         cmd += self.extra_args
         return cmd
+
+    def allow_gate(self, gate: str) -> None:
+        """Permit exactly the gate's own commands under `acceptEdits`.
+
+        `acceptEdits` lets the agent write files but not run anything, so it had
+        to trust the harness's report of the test run instead of seeing it. This
+        grants Bash for the gate's executables only — `pytest`, `npm`, whatever
+        the gate actually invokes — and nothing else.
+        """
+        for segment in re.split(r"&&|\|\||;|\|", gate or ""):
+            parts = segment.strip().split()
+            # step over any leading VAR=value assignments to reach the command
+            while parts and "=" in parts[0] and not parts[0].startswith("/"):
+                parts = parts[1:]
+            if not parts:
+                continue
+            rule = "Bash(%s:*)" % parts[0]
+            if rule not in self.allowed_tools:
+                self.allowed_tools.append(rule)
 
     @staticmethod
     def _extract(payload: Any) -> Dict[str, Any]:

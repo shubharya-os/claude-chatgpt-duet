@@ -342,3 +342,30 @@ echo done
     claude.bin = fake_bin(tmp_path, "claude", reader)
     claude.timeout = 20
     assert claude.send("go").ok
+
+
+def test_claude_is_allowed_to_run_the_gate_itself(tmp_path, monkeypatch):
+    """Under acceptEdits the agent can write files but not run them, so it had
+    to take the harness's word for the test run. Grant exactly the gate."""
+    dump = tmp_path / "args.txt"
+    monkeypatch.setenv("ARGDUMP", str(dump))
+    agent = ClaudeCodeAdapter(name="claude", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "claude", 'printf "%s\\n" "$@" > "$ARGDUMP"; echo "{}"')
+    agent.allow_gate("pytest -q && npm run lint")
+    agent.send("go")
+
+    args = dump.read_text()
+    assert "Bash(pytest:*)" in args
+    assert "Bash(npm:*)" in args
+    assert "--dangerously-skip-permissions" not in args   # not a blanket grant
+
+
+def test_allowing_the_gate_ignores_a_leading_env_assignment(tmp_path):
+    agent = ClaudeCodeAdapter(name="claude", cwd=str(tmp_path))
+    agent.allow_gate("CI=1 pytest -q")
+    assert agent.allowed_tools == ["Bash(pytest:*)"]
+
+
+def test_an_adapter_without_permissions_ignores_the_gate(tmp_path):
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.allow_gate("pytest -q")      # codex has its own sandbox; nothing to do

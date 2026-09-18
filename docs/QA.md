@@ -30,7 +30,8 @@ evidence and is labelled as such.
 | **ChatGPT sign-in** *(live)* | `codex login status` → "Logged in using ChatGPT". No API key present in `~/.codex/auth.json`. |
 | **Claude sign-in detection** *(live)* | `claude auth status` correctly reported a signed-out CLI, and `duet doctor` refused to call itself ready. |
 | **Install** *(live)* | Fresh clone → `pip install .` → `duet demo` on Python 3.9 / pip 21.2 / setuptools 58, and on 3.12. CI covers 3.9, 3.11 and 3.13. |
-| **Claude side, end to end** | **Not yet run.** It needs an interactive `claude auth login`, which only the account holder can complete. The adapter's flags and parsing are pinned by stubbed tests; the live round trip is still outstanding. |
+| **Claude side, end to end** *(live)* | `claude auth status` → signed in via `claude.ai` subscription. A headless `claude -p` round trip returned the expected answer. |
+| **Both agents, end to end, on duet itself** *(live)* | duet built a `duet verify` subcommand inside its own repository, Claude Code leading and ChatGPT reviewing, gated by the full test suite. Four rounds, consensus, exit 0. Both models emitted a valid envelope on every turn (`parse_ok=True` throughout) with no prompting beyond the system prompt. Details below. |
 
 ## Bugs the live runs found
 
@@ -57,6 +58,49 @@ caught by the stubbed suite alone.
 6. **`duet demo` left its report where nobody would look.** It runs in a temp
    workspace, so a following `duet report` found nothing. The demo now prints the
    exact command to read its own transcript.
+
+## duet on duet: the full two-agent run
+
+Task: add a `duet verify` subcommand that re-runs the recorded gate and reports
+whether the last session's sign-off still holds. Gate: the 76-test suite. Claude
+Code led, ChatGPT reviewed, on a `duet/self-improve` branch.
+
+| round | agent | verdict | state | what happened |
+|---|---|---|---|---|
+| 1 | Claude Code | CONTINUE | `5e7a9342` | implemented the command plus 11 tests and turned the README command block into a table |
+| 2 | ChatGPT | DONE | `5e7a9342` | ran the gate itself (87 passed), checked `--help` and the empty-workspace path, weighed two design points, approved |
+| 3 | Claude Code | DONE | `d35aa23b` | final check found a false claim **in its own README text** and fixed it — moving the state id and voiding ChatGPT's sign-off |
+| 4 | ChatGPT | DONE | `d35aa23b` | re-reviewed the new state and re-signed |
+
+Round 3 is the part worth reading. Claude's own sentence said `verify` "exits 0 only
+if the state still matches and the gate passes" — but a session recorded without a
+`--gate` has nothing to re-run, so `verify` exits 0 having executed nothing, and CI
+reads exit codes rather than prose. It fixed the documentation instead of the exit
+code, on the grounds that a skipped gate is `ok=True` everywhere else in duet and
+making `verify` alone disagree would let `duet run` approve a state that
+`duet verify` calls broken. It then said plainly that its edit had moved the digest
+and that its peer needed to re-sign.
+
+Round 4 is the other half: ChatGPT's round 2 sign-off did not survive the change,
+and the session could not end until it looked again. That is the double-signoff rule
+doing its job on a real run rather than in a test.
+
+**Independently checked afterwards, not taken on trust:** 87 tests pass; `duet verify`
+exits `0` on a matching state, `1` on a drifted one, `1` on a failing gate, and `2`
+when no session exists. The implementation also handles cases the task never
+mentioned — a session directory that saved no state, a single `DONE` not counting as
+a sign-off, and two `DONE`s against different states not counting either.
+
+### What that run exposed
+
+**Claude Code could not run the gate.** duet launched it with `--permission-mode
+acceptEdits`, which allows file edits but not Bash, so every command it tried came
+back needing approval in a non-interactive session. It said so honestly rather than
+claiming to have run the tests — but a reviewer that cannot execute anything is
+reviewing on hearsay, which is the failure this project exists to remove. duet now
+translates the gate into `--allowedTools "Bash(pytest:*)"` for exactly the gate's own
+executables, and nothing wider. Leading `VAR=value` assignments are stepped over, and
+`&&`-joined gates grant each command.
 
 ## Findings from ChatGPT's review of duet
 
