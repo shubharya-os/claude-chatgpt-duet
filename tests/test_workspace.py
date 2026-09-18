@@ -78,3 +78,39 @@ def test_diff_shows_new_files_without_staging_them(tmp_path):
 def test_diff_falls_back_to_a_listing_outside_a_repo(tmp_path):
     (tmp_path / "a.py").write_text("x = 1\n")
     assert "a.py" in Workspace(str(tmp_path)).diff()
+
+
+def test_a_large_file_edited_in_place_changes_the_state_id(tmp_path):
+    """Summarising big files by length let two different workspaces share a
+    state id, so a sign-off — and a cached gate result — carried across a change
+    neither agent had seen."""
+    big = tmp_path / "big.dat"
+    big.write_bytes(b"OK" + b"\0" * 3_000_000)
+    ws = Workspace(str(tmp_path))
+    before = ws.digest()
+
+    big.write_bytes(b"NO" + b"\0" * 3_000_000)   # same length, different content
+    assert big.stat().st_size == 3_000_002
+    assert ws.digest() != before
+
+
+def test_retargeting_a_symlink_changes_the_state_id(tmp_path):
+    (tmp_path / "a.txt").write_text("one")
+    (tmp_path / "b.txt").write_text("two")
+    link = tmp_path / "current.txt"
+    link.symlink_to("a.txt")
+
+    ws = Workspace(str(tmp_path))
+    before = ws.digest()
+    link.unlink()
+    link.symlink_to("b.txt")
+    assert ws.digest() != before
+
+
+def test_a_symlink_is_not_followed_when_hashing(tmp_path):
+    outside = tmp_path.parent / "outside-target.txt"
+    outside.write_text("secret")
+    (tmp_path / "link.txt").symlink_to(outside)
+    ws = Workspace(str(tmp_path))
+    assert ws.digest()            # does not raise, does not read through
+    outside.unlink()

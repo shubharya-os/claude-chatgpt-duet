@@ -72,6 +72,8 @@ class DebateState:
         self.last_verdict: Dict[str, str] = {}
         self.signoffs: Dict[str, Signoff] = {}
         self.arbitrations: List[Dict[str, Any]] = []
+        self.failed_arbitrations: Dict[str, int] = {}
+        self.arbitration_retry_at: Dict[str, int] = {}
         self.stall_rounds = 0
         self.last_digest: Optional[str] = None
 
@@ -98,8 +100,13 @@ class DebateState:
         agent = env.agent
 
         # 1. This agent verifies fixes that were claimed against *its* issues.
+        #
+        # Only a reply we could actually read counts. A malformed or empty reply
+        # has no issues in it, and treating that absence as "they looked and
+        # agreed" would close a blocker on silence — the one thing this protocol
+        # promises never to do.
         re_raised = {i.id for i in env.issues}
-        for issue in self.issues.values():
+        for issue in (self.issues.values() if env.parse_ok else []):
             if issue.raised_by != agent or issue.status != "claimed_fixed":
                 continue
             if issue.id in re_raised:
@@ -170,6 +177,15 @@ class DebateState:
         self.last_digest = digest
         return report
 
+    def record_failed_arbitration(self, issue_id: str, reason: str) -> None:
+        """The decider could not rule. The issue stays open — an outage is not a
+        verdict — and waits out another debate window before being retried."""
+        self.failed_arbitrations[issue_id] = self.failed_arbitrations.get(issue_id, 0) + 1
+        issue = self.issues.get(issue_id)
+        if issue is not None:
+            issue.resolution = "arbitration failed: %s" % reason
+            self.arbitration_retry_at[issue_id] = issue.rounds_open + self.max_debate
+
     def record_arbitration(self, issue_id: str, decider: str, ruling: str, round_no: int) -> None:
         issue = self.issues.get(issue_id)
         if issue is not None:
@@ -181,10 +197,14 @@ class DebateState:
 
     # -- judging ----------------------------------------------------------
     def arbitration_candidate(self) -> Optional[Issue]:
+        # An issue whose arbitration failed has to age another full debate
+        # window past the point it failed at, or a broken decider spins the
+        # session by being asked again every single round.
         stuck = [
             i
             for i in self.open_issues()
-            if i.rounds_open >= self.max_debate and i.severity in BLOCKING_SEVERITIES
+            if i.rounds_open >= self.arbitration_retry_at.get(i.id, self.max_debate)
+            and i.severity in BLOCKING_SEVERITIES
         ]
         if not stuck:
             return None
@@ -251,6 +271,8 @@ class DebateState:
             last_verdict=dict(self.last_verdict),
             signoffs={a: dict(agent=s.agent, round=s.round, digest=s.digest) for a, s in self.signoffs.items()},
             arbitrations=list(self.arbitrations),
+            failed_arbitrations=dict(self.failed_arbitrations),
+            arbitration_retry_at=dict(self.arbitration_retry_at),
             stall_rounds=self.stall_rounds,
             last_digest=self.last_digest,
         )
@@ -265,6 +287,8 @@ class DebateState:
         for agent, raw in (data.get("signoffs") or {}).items():
             state.signoffs[agent] = Signoff(**raw)
         state.arbitrations = list(data.get("arbitrations", []))
+        state.failed_arbitrations = dict(data.get("failed_arbitrations", {}))
+        state.arbitration_retry_at = dict(data.get("arbitration_retry_at", {}))
         state.stall_rounds = int(data.get("stall_rounds", 0))
         state.last_digest = data.get("last_digest")
         return state

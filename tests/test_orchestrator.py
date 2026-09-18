@@ -170,3 +170,33 @@ def test_progress_is_visible_while_a_session_runs(tmp_path):
     assert proc.returncode == 0
     assert "BOTH AGENTS SIGNED OFF" in proc.stdout
     assert "round 1" in proc.stdout          # per-turn progress reached the pipe
+
+
+def test_a_broken_decider_cannot_close_a_blocker(tmp_path):
+    """Arbitration used to mark the issue settled whatever came back, so a
+    backend failure silently closed an unresolved blocker."""
+    from duet.adapters.base import AgentReply
+
+    stand_firm = envelope("I still disagree", "CONTINUE")
+    blocker = envelope("this is wrong", "CONTINUE",
+                       issues=[{"id": "real-blocker", "title": "broken", "severity": "blocker"}])
+
+    class BreaksWhenDeciding(MockAdapter):
+        def send(self, prompt, system="", round_no=0):
+            if "ARBITRATION RULING" in prompt:
+                return AgentReply(text="", error="decider backend exploded")
+            return super().send(prompt, system, round_no)
+
+    cfg = Config(task="t", root=str(tmp_path), start="claude", max_debate=2, max_rounds=8,
+                 agents=[AgentSpec("claude", "mock"), AgentSpec("gpt", "mock")])
+    orch = Orchestrator(cfg, adapters={
+        "claude": BreaksWhenDeciding(name="claude", cwd=str(tmp_path),
+                                     config={"script": [stand_firm]}),
+        "gpt": MockAdapter(name="gpt", cwd=str(tmp_path), config={"script": [blocker]}),
+    })
+    result = orch.run()
+
+    assert orch.state.issues["real-blocker"].status == "open"   # never closed
+    assert not orch.state.arbitrations                          # nothing recorded as ruled
+    assert orch.state.failed_arbitrations["real-blocker"] >= 1
+    assert result.status != "consensus"

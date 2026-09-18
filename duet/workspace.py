@@ -20,7 +20,7 @@ SKIP_DIRS = {
     ".pytest_cache", ".mypy_cache", "dist", "build", ".next", "target",
     ".idea", ".vscode", ".DS_Store",
 }
-MAX_DIGEST_FILE_BYTES = 2_000_000
+DIGEST_CHUNK_BYTES = 1_048_576
 
 
 class PatchRejected(Exception):
@@ -75,6 +75,11 @@ class Workspace:
         return target
 
     def tracked_files(self) -> List[Path]:
+        """Every file that counts as workspace state, symlinks included.
+
+        Symlinks are listed but never followed: retargeting one changes what the
+        project does, so it has to change the state id too.
+        """
         files: List[Path] = []
         for dirpath, dirnames, filenames in os.walk(self.root):
             dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
@@ -82,9 +87,8 @@ class Workspace:
                 if name == ".DS_Store":
                     continue
                 path = Path(dirpath) / name
-                if path.is_symlink() or not path.is_file():
-                    continue
-                files.append(path)
+                if path.is_symlink() or path.is_file():
+                    files.append(path)
         return files
 
     def digest(self) -> str:
@@ -100,11 +104,21 @@ class Workspace:
             h.update(rel.encode("utf-8", "replace"))
             h.update(b"\0")
             try:
-                size = path.stat().st_size
-                if size > MAX_DIGEST_FILE_BYTES:
-                    h.update(b"large:%d" % size)
+                if path.is_symlink():
+                    h.update(b"symlink:")
+                    h.update(os.readlink(str(path)).encode("utf-8", "replace"))
                 else:
-                    h.update(path.read_bytes())
+                    # Hashed in chunks rather than summarised by size: a large
+                    # file edited in place keeps its length, and summarising by
+                    # length let two different workspaces share a state id — so
+                    # a sign-off, and a cached gate result, carried across a
+                    # change neither agent had seen.
+                    with path.open("rb") as fh:
+                        while True:
+                            chunk = fh.read(DIGEST_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            h.update(chunk)
             except OSError as exc:
                 h.update(("unreadable:%s" % exc).encode())
             h.update(b"\n")

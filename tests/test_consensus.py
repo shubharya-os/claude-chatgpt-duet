@@ -118,3 +118,43 @@ def test_state_survives_a_round_trip():
     assert restored.issues["x"].title == "t"
     assert restored.last_verdict["claude"] == "DONE"
     assert restored.signoffs["claude"].digest == "a"
+
+
+def test_an_unreadable_reply_cannot_verify_a_claimed_fix():
+    """The raiser dropping an issue is what closes it. A reply we could not parse
+    contains no issues at all, and treating that emptiness as agreement would
+    close a blocker on silence."""
+    s = state()
+    s.ingest(env("gpt", 1, '{"message":"no","verdict":"CONTINUE","issues":[{"id":"x","title":"t","severity":"blocker"}]}'), "a")
+    s.ingest(env("claude", 2, '{"message":"fixed","verdict":"CONTINUE","resolves":["x"]}'), "b")
+    assert s.issues["x"].status == "claimed_fixed"
+
+    garbled = env("gpt", 3, "x is still broken, and my envelope did not make it")
+    assert garbled.parse_ok is False
+    s.ingest(garbled, "b")
+    assert s.issues["x"].status == "claimed_fixed"   # not resolved
+    assert s.blocking_issues()
+
+    s.ingest(env("gpt", 4, DONE), "b")               # a real reply does close it
+    assert s.issues["x"].status == "resolved"
+
+
+def test_a_failed_arbitration_leaves_the_issue_open_and_backs_off():
+    """A decider that cannot answer is an outage, not a verdict — and retrying it
+    every round would spin the session."""
+    s = state()
+    raise_it = '{"message":"no","verdict":"CONTINUE","issues":[{"id":"x","title":"t","severity":"blocker"}]}'
+    for round_no in range(1, 5):
+        s.ingest(env("gpt", round_no, raise_it), "a")
+        s.ingest(env("claude", round_no, '{"message":"I disagree","verdict":"CONTINUE"}'), "a")
+    assert s.decide("a", gate_ok=True).kind == "arbitrate"
+
+    s.record_failed_arbitration("x", "backend timed out")
+    assert s.issues["x"].status == "open"             # still blocking
+    assert s.blocking_issues()
+    assert s.decide("a", gate_ok=True).kind != "arbitrate"   # not retried immediately
+
+    aged_to = s.issues["x"].rounds_open + s.max_debate
+    while s.issues["x"].rounds_open < aged_to:        # after another full window
+        s.ingest(env("gpt", 9, raise_it), "a")
+    assert s.decide("a", gate_ok=True).kind == "arbitrate"

@@ -58,6 +58,31 @@ caught by the stubbed suite alone.
    workspace, so a following `duet report` found nothing. The demo now prints the
    exact command to read its own transcript.
 
+## Findings from ChatGPT's review of duet
+
+duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,
+`protocol.py` and `workspace.py` and asked for correctness bugs only. All four of
+its findings were real, and all four are now fixed with regression tests. This is
+the clearest evidence so far that the premise holds: a second model reads your code
+differently and catches what you did not.
+
+1. **A large file edited in place kept its state id.** `digest()` summarised files
+   over 2MB as `large:<size>`, so a same-length content change produced an identical
+   id — carrying a sign-off, and a cached gate result, across a change neither agent
+   had seen. Files are now hashed in chunks, with no size shortcut.
+2. **A broken decider could close a blocker.** `arbitrate()` recorded a ruling
+   whatever came back, so a backend failure marked an unresolved blocker
+   `arbitrated`. A failed arbitration now leaves the issue open and waits another
+   debate window before retrying, so an outage neither settles the argument nor
+   spins the session.
+3. **An unparseable reply could verify a claimed fix.** Verification worked by
+   noticing the raiser had not re-raised the issue — but a reply with no envelope
+   has no issues in it at all, so silence closed the issue. Exactly the thing the
+   protocol promises never to do. Verification now requires a reply that parsed.
+4. **Symlinks were invisible to the state id.** `tracked_files()` skipped them, so
+   retargeting a symlink changed what the project did without changing the id. They
+   are now hashed by their target, and never followed.
+
 ## Known gaps
 
 - The full two-agent live session is pending the Claude sign-in described above.

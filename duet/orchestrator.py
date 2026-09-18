@@ -278,7 +278,15 @@ class Orchestrator:
         if isinstance(ruling, dict):
             text = "%s — %s" % (ruling.get("decision", "ruled"), ruling.get("rationale", ""))
         else:
-            text = record.envelope.summary or record.envelope.message[:300] or "ruled by %s" % decider
+            text = record.envelope.summary or record.envelope.message[:300]
+
+        if record.error or not record.envelope.parse_ok or not text.strip():
+            reason = record.error or "the decider gave no readable ruling"
+            self.state.record_failed_arbitration(issue.id, reason)
+            self.history.append("R%-2d ARBITRATION on %s FAILED: %s" % (round_no, issue.id, reason[:70]))
+            self.emit("arbitration_failed", round=round_no, issue=issue.id, decider=decider, reason=reason)
+            return
+
         self.state.record_arbitration(issue.id, decider, text, round_no)
         self.history.append("R%-2d ARBITRATION on %s -> %s (by %s)" % (round_no, issue.id, text[:80], decider))
         self.emit("arbitration_done", round=round_no, issue=issue.id, decider=decider, ruling=text)
