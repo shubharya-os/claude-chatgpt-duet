@@ -12,7 +12,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from duet.adapters.base import Adapter, AgentReply, Probe
 
@@ -22,7 +22,42 @@ DEFAULT_CANDIDATES = (
     str(Path.home() / ".claude" / "local" / "claude"),
     "/opt/homebrew/bin/claude",
     "/usr/local/bin/claude",
+    str(Path.home() / ".local" / "bin" / "claude"),
 )
+
+INSTALL_HINT = "npm install -g @anthropic-ai/claude-code"
+LOGIN_HINT = "claude auth login   (sign in with your Claude account — no API key needed)"
+
+
+def read_auth_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], str]:
+    """(logged_in, description). None means it could not be determined.
+
+    `claude auth status` prints JSON and costs nothing, which is the only honest
+    way to answer "is this connected?" — a successful `--version` says only that
+    the binary exists, and that false green is exactly what sends someone into a
+    session that fails on its first turn.
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "auth", "status"], capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    try:
+        start = out.index("{")
+        data = json.loads(out[start : out.rindex("}") + 1])
+    except (ValueError, json.JSONDecodeError):
+        low = out.lower()
+        if "not logged in" in low or "please run /login" in low:
+            return False, "not logged in"
+        return None, out.splitlines()[0] if out else "no output from `claude auth status`"
+    if not isinstance(data, dict) or "loggedIn" not in data:
+        return None, "unrecognised output from `claude auth status`"
+    method = str(data.get("authMethod") or "unknown")
+    if data.get("loggedIn"):
+        return True, "signed in (%s)" % method
+    return False, "not signed in"
 
 
 class ClaudeCodeAdapter(Adapter):
@@ -76,7 +111,8 @@ class ClaudeCodeAdapter(Adapter):
             return AgentReply(
                 text="",
                 error="the `claude` CLI was not found. Install it with "
-                "`npm i -g @anthropic-ai/claude-code`, or set DUET_CLAUDE_BIN.",
+                "`%s`, then `claude auth login` to sign in. "
+                "You can also point duet at it with DUET_CLAUDE_BIN." % INSTALL_HINT,
             )
         except subprocess.TimeoutExpired:
             return AgentReply(text="", error="claude timed out after %ds" % self.timeout)
@@ -110,11 +146,10 @@ class ClaudeCodeAdapter(Adapter):
             "num_turns": data.get("num_turns"),
         }
         if data.get("is_error") or proc.returncode != 0:
-            return AgentReply(
-                text=str(text),
-                meta=meta,
-                error=str(data.get("error") or stderr or "claude exited %d" % proc.returncode)[:800],
-            )
+            detail = str(data.get("error") or text or stderr or "claude exited %d" % proc.returncode)
+            if "not logged in" in detail.lower() or "/login" in detail.lower():
+                detail = "Claude Code is not signed in. Run: %s" % LOGIN_HINT
+            return AgentReply(text=str(text), meta=meta, error=detail[:800])
         return AgentReply(text=str(text), meta=meta)
 
     @classmethod
@@ -123,19 +158,23 @@ class ClaudeCodeAdapter(Adapter):
         if not binary:
             return Probe(
                 ok=False,
-                detail="`claude` CLI not found on PATH",
-                fix="npm i -g @anthropic-ai/claude-code   (then run `claude` once to sign in)",
+                detail="`claude` CLI not found",
+                fix="%s   then:  claude auth login" % INSTALL_HINT,
             )
-        try:
-            proc = subprocess.run(
-                [binary, "--version"], capture_output=True, text=True, timeout=30
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return Probe(ok=False, detail="found %s but could not run it: %s" % (binary, exc))
-        if proc.returncode != 0:
+        logged_in, detail = read_auth_status(binary)
+        if logged_in is False:
+            return Probe(ok=False, detail="installed but %s" % detail, fix=LOGIN_HINT)
+        if logged_in is None:
+            try:
+                proc = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as exc:
+                return Probe(ok=False, detail="found %s but could not run it: %s" % (binary, exc))
+            if proc.returncode != 0:
+                return Probe(ok=False, detail="%s --version exited %d" % (binary, proc.returncode),
+                             fix=LOGIN_HINT)
             return Probe(
                 ok=False,
-                detail="%s --version exited %d" % (binary, proc.returncode),
-                fix="run `claude` once interactively to finish setup",
+                detail="installed, but the login state could not be read (%s)" % detail,
+                fix=LOGIN_HINT,
             )
-        return Probe(ok=True, detail="%s (%s)" % ((proc.stdout or "").strip() or "installed", binary))
+        return Probe(ok=True, detail="%s (%s)" % (detail, binary))

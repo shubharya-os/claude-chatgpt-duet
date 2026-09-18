@@ -136,6 +136,11 @@ An adapter declares `edits_workspace`:
   contents which the harness writes, and can request files it has not been shown via
   `reads`.
 
+Both default adapters are subscription-authenticated CLIs: duet shells out to
+`claude` and `codex`, which own their own OAuth tokens. duet holds no credential of
+any kind, and its probes ask those CLIs directly (`claude auth status`,
+`codex login status`) rather than inferring from the presence of a binary.
+
 Both paths lead to real files, so either side can lead. Patch paths are resolved
 against the workspace root and refused if they escape it or target `.git/` or
 `.duet/`.

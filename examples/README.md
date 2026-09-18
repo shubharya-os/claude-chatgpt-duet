@@ -3,6 +3,9 @@
 Every one of these runs in the directory you point it at, writes real files, and
 exits `0` only if both agents signed off.
 
+They assume `duet login` has been run once, so both sides are signed in with your
+Claude and ChatGPT plans. No API keys appear anywhere below.
+
 ## Build something from nothing
 
 ```bash

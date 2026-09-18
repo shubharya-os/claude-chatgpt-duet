@@ -1,14 +1,17 @@
-"""ChatGPT with hands: OpenAI's Codex CLI.
+"""ChatGPT, through OpenAI's Codex CLI.
 
-Optional. If it is installed, the ChatGPT side edits the workspace directly
-instead of shipping patches, which makes the two peers symmetrical.
+This is the default way duet talks to ChatGPT, because it signs in with a
+ChatGPT account — no API key, no per-token billing. It also gives this side its
+own tools, so both peers can read, edit and run things directly.
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
-from typing import Any, Dict, List, Optional
+import tempfile
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from duet.adapters.base import Adapter, AgentReply, Probe
 
@@ -17,12 +20,35 @@ DEFAULT_CANDIDATES = (
     "codex",
     "/opt/homebrew/bin/codex",
     "/usr/local/bin/codex",
+    str(Path.home() / ".local" / "bin" / "codex"),
 )
+
+INSTALL_HINT = "npm install -g @openai/codex"
+LOGIN_HINT = "codex login   (sign in with your ChatGPT account — no API key needed)"
+
+
+def read_login_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], str]:
+    """(logged_in, human description). None means it could not be determined."""
+    try:
+        proc = subprocess.run(
+            [binary, "login", "status"], capture_output=True, text=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    low = out.lower()
+    if "not logged in" in low or "please log in" in low or "run `codex login`" in low:
+        return False, out.splitlines()[0] if out else "not logged in"
+    if "logged in" in low:
+        return True, out.splitlines()[0]
+    if proc.returncode != 0:
+        return False, out.splitlines()[0] if out else "codex login status exited %d" % proc.returncode
+    return None, out.splitlines()[0] if out else "could not determine login state"
 
 
 class CodexCliAdapter(Adapter):
     backend = "codex-cli"
-    display = "ChatGPT (Codex CLI)"
+    display = "ChatGPT (Codex)"
     edits_workspace = True
 
     def __init__(self, *args, **kwargs):
@@ -33,44 +59,73 @@ class CodexCliAdapter(Adapter):
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
         self.turns = 0
 
-    def _base(self) -> List[str]:
-        cmd = [self.bin, "exec", "--skip-git-repo-check"]
+    def _base(self, last_message_file: str) -> List[str]:
+        # --color never keeps ANSI escapes out of anything we parse; -o gives us
+        # the agent's final message verbatim instead of scraped from the log.
+        cmd = [
+            self.bin, "exec",
+            "--skip-git-repo-check",
+            "--color", "never",
+            "-C", self.cwd,
+            "-o", last_message_file,
+        ]
         if self.sandbox:
             cmd += ["--sandbox", self.sandbox]
         if self.model:
             cmd += ["--model", self.model]
         return cmd + self.extra_args
 
-    def _run(self, args: List[str]) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            args, cwd=self.cwd, capture_output=True, text=True, timeout=self.timeout
-        )
-
     def send(self, prompt: str, system: str = "", round_no: int = 0) -> AgentReply:
         full = ("%s\n\n---\n\n%s" % (system, prompt)) if system else prompt
-        attempts: List[List[str]] = []
-        if self.turns:
-            attempts.append(self._base() + ["resume", "--last", full])
-        attempts.append(self._base() + [full])
+        handle, last_path = tempfile.mkstemp(prefix="duet-codex-", suffix=".txt")
+        os.close(handle)
+        try:
+            attempts: List[List[str]] = []
+            if self.turns:
+                attempts.append(self._base(last_path) + ["resume", "--last", full])
+            attempts.append(self._base(last_path) + [full])
 
-        last_error = ""
-        for args in attempts:
+            last_error = ""
+            for args in attempts:
+                try:
+                    proc = subprocess.run(
+                        args, cwd=self.cwd, capture_output=True, text=True, timeout=self.timeout
+                    )
+                except FileNotFoundError:
+                    return AgentReply(
+                        text="",
+                        error="the `codex` CLI was not found. Install it with `%s`, then "
+                        "`codex login` to sign in with your ChatGPT account." % INSTALL_HINT,
+                    )
+                except subprocess.TimeoutExpired:
+                    return AgentReply(text="", error="codex timed out after %ds" % self.timeout)
+
+                stdout = (proc.stdout or "").strip()
+                combined = (stdout + "\n" + (proc.stderr or "")).strip()
+                if "not logged in" in combined.lower():
+                    return AgentReply(text="", error="codex is not signed in. Run: %s" % LOGIN_HINT)
+
+                final = ""
+                try:
+                    final = Path(last_path).read_text(encoding="utf-8", errors="replace").strip()
+                except OSError:
+                    final = ""
+                text = final or stdout
+
+                if proc.returncode == 0 and text:
+                    self.turns += 1
+                    return AgentReply(
+                        text=text,
+                        meta={"backend": self.backend, "model": self.model,
+                              "used_last_message_file": bool(final)},
+                    )
+                last_error = combined[:800] or "codex exited %d" % proc.returncode
+            return AgentReply(text="", error=last_error)
+        finally:
             try:
-                proc = self._run(args)
-            except FileNotFoundError:
-                return AgentReply(
-                    text="",
-                    error="the `codex` CLI was not found. Install it with "
-                    "`npm i -g @openai/codex`, or use the openai-api backend.",
-                )
-            except subprocess.TimeoutExpired:
-                return AgentReply(text="", error="codex timed out after %ds" % self.timeout)
-            text = (proc.stdout or "").strip()
-            if proc.returncode == 0 and text:
-                self.turns += 1
-                return AgentReply(text=text, meta={"backend": self.backend, "model": self.model})
-            last_error = ((proc.stderr or "") + "\n" + text).strip()[:800] or "codex exited %d" % proc.returncode
-        return AgentReply(text="", error=last_error)
+                os.unlink(last_path)
+            except OSError:
+                pass
 
     @classmethod
     def probe(cls, config: Optional[Dict[str, Any]] = None) -> Probe:
@@ -78,13 +133,16 @@ class CodexCliAdapter(Adapter):
         if not binary:
             return Probe(
                 ok=False,
-                detail="`codex` CLI not found (optional)",
-                fix="npm i -g @openai/codex   — or stay on the openai-api backend",
+                detail="`codex` CLI not found",
+                fix="%s   then:  codex login" % INSTALL_HINT,
             )
-        try:
-            proc = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.SubprocessError) as exc:
-            return Probe(ok=False, detail="found %s but could not run it: %s" % (binary, exc))
-        if proc.returncode != 0:
-            return Probe(ok=False, detail="%s --version exited %d" % (binary, proc.returncode))
-        return Probe(ok=True, detail="%s (%s)" % ((proc.stdout or "").strip() or "installed", binary))
+        logged_in, detail = read_login_status(binary)
+        if logged_in is False:
+            return Probe(ok=False, detail="installed but not signed in (%s)" % detail, fix=LOGIN_HINT)
+        if logged_in is None:
+            return Probe(
+                ok=False,
+                detail="could not read the login state: %s" % detail,
+                fix=LOGIN_HINT,
+            )
+        return Probe(ok=True, detail="%s (%s)" % (detail, binary))

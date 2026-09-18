@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from duet import __version__, ui
 from duet.adapters import REGISTRY
+from duet.adapters.base import Adapter
 from duet.config import (
     AgentSpec,
     Config,
@@ -163,7 +165,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     if problems:
         for line in problems:
             print(ui.red("✗ ") + line)
-        print("\nrun " + ui.bold("duet doctor") + " for the full check.")
+        print("\nfix both sides in one step with " + ui.bold("duet login")
+              + ui.dim("  (or `duet doctor` for the full check)"))
         return 3
 
     orch = Orchestrator(cfg, reporter=make_reporter(cfg.agent_names, verbose=not args.quiet, as_json=args.json))
@@ -240,7 +243,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if ok:
         print(ui.green(ui.bold("ready.")) + " try: " + ui.bold('duet run "your task here"'))
     else:
-        print(ui.red(ui.bold("not ready yet")) + " — fix the items above, then re-run " + ui.bold("duet doctor"))
+        print(ui.red(ui.bold("not ready yet")) + " — run " + ui.bold("duet login")
+              + " to sign both sides in, then " + ui.bold("duet doctor") + " again")
     return 0 if ok else 1
 
 
@@ -287,6 +291,71 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     print()
     return cmd_doctor(args)
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    """Walk both sign-ins. Neither one involves an API key.
+
+    duet never handles your credentials: each CLI runs its own browser sign-in
+    attached to your terminal, and duet only asks afterwards whether it worked.
+    """
+    from duet.adapters.claude_code import ClaudeCodeAdapter
+    from duet.adapters.codex_cli import CodexCliAdapter
+
+    root = str(Path(args.root).expanduser().resolve())
+    load_env_file(root)
+    cfg = load_config(root)
+
+    plan = []
+    for spec in cfg.agents:
+        if spec.backend == "claude-code":
+            plan.append((spec.name, ClaudeCodeAdapter, ["auth", "login"], "Claude"))
+        elif spec.backend == "codex-cli":
+            plan.append((spec.name, CodexCliAdapter, ["login"], "ChatGPT"))
+        elif spec.backend == "openai-api":
+            print(ui.yellow("%s uses the API-key backend (openai-api); nothing to sign in to." % spec.name))
+            print(ui.dim("  switch it to a ChatGPT login with: duet init --gpt-backend codex-cli"))
+
+    if args.agent:
+        plan = [item for item in plan if item[0] == args.agent]
+        if not plan:
+            print(ui.red("no agent named %r uses a sign-in backend" % args.agent))
+            return 2
+
+    failures = 0
+    for name, cls, sub, account in plan:
+        probe = cls.probe()
+        if probe.ok and not args.force:
+            print(ui.green("✓ ") + "%s is already signed in — %s" % (name, probe.detail))
+            continue
+        binary = cls(name=name, cwd=root).bin
+        if not Adapter.which(binary):
+            print(ui.red("✗ ") + "%s: %s" % (name, probe.detail))
+            if probe.fix:
+                print("    " + ui.yellow("install it first: ") + probe.fix)
+            failures += 1
+            continue
+        print()
+        print(ui.bold("signing %s in with your %s account" % (name, account)))
+        print(ui.dim("  running: %s %s" % (binary, " ".join(sub))))
+        print(ui.dim("  this opens your browser; duet never sees your credentials."))
+        try:
+            code = subprocess.call([binary, *sub])
+        except (OSError, KeyboardInterrupt) as exc:
+            print(ui.red("  could not run it: %s" % exc))
+            failures += 1
+            continue
+        after = cls.probe()
+        if after.ok:
+            print(ui.green("✓ ") + "%s signed in — %s" % (name, after.detail))
+        else:
+            failures += 1
+            print(ui.red("✗ ") + "%s is still not signed in (%s exited %d)" % (name, sub[0], code))
+            if after.fix:
+                print("    " + ui.yellow("try: ") + after.fix)
+
+    print()
+    return cmd_doctor(args) if not failures else 1
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
@@ -437,6 +506,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--rounds", type=int)
     p_init.set_defaults(func=cmd_init)
 
+    p_login = sub.add_parser("login", help="sign both agents in (no API key involved)")
+    common(p_login)
+    p_login.add_argument("agent", nargs="?", choices=["claude", "gpt"], help="sign in just one side")
+    p_login.add_argument("--force", action="store_true", help="re-run the sign-in even if it looks connected")
+    p_login.set_defaults(func=cmd_login)
+
     p_demo = sub.add_parser("demo", help="run the full loop with scripted agents (no keys, no network)")
     common(p_demo)
     p_demo.set_defaults(func=cmd_demo)
@@ -459,7 +534,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()
-        print("\n" + ui.dim("first time? run: ") + ui.bold("duet doctor") + ui.dim("  then  ") + ui.bold("duet demo"))
+        print("\n" + ui.dim("first time? ") + ui.bold("duet login") + ui.dim(" → ")
+              + ui.bold("duet doctor") + ui.dim(" → ") + ui.bold("duet demo"))
         return 0
     try:
         return int(args.func(args))

@@ -112,14 +112,75 @@ def test_claude_adapter_explains_a_missing_cli(tmp_path):
     agent = ClaudeCodeAdapter(name="claude", cwd=str(tmp_path))
     agent.bin = str(tmp_path / "definitely-not-here")
     reply = agent.send("go")
-    assert not reply.ok and "npm i -g @anthropic-ai/claude-code" in reply.error
+    assert not reply.ok and "npm install -g @anthropic-ai/claude-code" in reply.error
 
 
-def test_claude_probe_reports_a_missing_cli_with_a_fix(monkeypatch):
-    monkeypatch.setenv("PATH", "")
-    monkeypatch.setenv("DUET_CLAUDE_BIN", "")
+def test_claude_adapter_names_the_sign_in_when_the_cli_is_not_logged_in(tmp_path):
+    """The CLI answers a prompt with a successful payload whose text says it is
+    not logged in. That must surface as a sign-in problem, not as an agent turn."""
+    agent = ClaudeCodeAdapter(name="claude", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "claude", r"""
+echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"s1"}'
+""")
+    reply = agent.send("go")
+    assert not reply.ok
+    assert "claude auth login" in reply.error
+
+
+# -- sign-in probes (no API keys anywhere) ---------------------------------
+def test_claude_probe_reads_a_real_login(tmp_path, monkeypatch):
+    binary = fake_bin(tmp_path, "claude",
+                      """echo '{"loggedIn": true, "authMethod": "claudeai"}'""")
+    monkeypatch.setattr("duet.adapters.claude_code.Adapter.which", staticmethod(lambda *a: binary))
     probe = ClaudeCodeAdapter.probe()
-    assert not probe.ok and "npm i -g" in probe.fix
+    assert probe.ok and "claudeai" in probe.detail
+
+
+def test_claude_probe_catches_an_installed_but_signed_out_cli(tmp_path, monkeypatch):
+    """The bug this replaces: `--version` succeeds on a signed-out CLI, so duet
+    reported ready and then failed on the first turn."""
+    binary = fake_bin(tmp_path, "claude",
+                      """echo '{"loggedIn": false, "authMethod": "none"}'""")
+    monkeypatch.setattr("duet.adapters.claude_code.Adapter.which", staticmethod(lambda *a: binary))
+    probe = ClaudeCodeAdapter.probe()
+    assert not probe.ok
+    assert "not signed in" in probe.detail
+    assert "claude auth login" in probe.fix
+    assert "API key" in probe.fix          # and it says you do not need one
+
+
+def test_claude_probe_does_not_claim_ready_when_the_state_is_unreadable(tmp_path, monkeypatch):
+    binary = fake_bin(tmp_path, "claude", 'echo "who knows"')
+    monkeypatch.setattr("duet.adapters.claude_code.Adapter.which", staticmethod(lambda *a: binary))
+    probe = ClaudeCodeAdapter.probe()
+    assert not probe.ok and "could not be read" in probe.detail
+
+
+def test_claude_probe_reports_a_missing_cli_with_an_install_command(monkeypatch):
+    monkeypatch.setattr("duet.adapters.claude_code.Adapter.which", staticmethod(lambda *a: None))
+    probe = ClaudeCodeAdapter.probe()
+    assert not probe.ok and "npm install -g @anthropic-ai/claude-code" in probe.fix
+
+
+def test_codex_probe_reports_a_chatgpt_login(tmp_path, monkeypatch):
+    binary = fake_bin(tmp_path, "codex", 'echo "Logged in using ChatGPT"')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    probe = CodexCliAdapter.probe()
+    assert probe.ok and "ChatGPT" in probe.detail
+
+
+def test_codex_probe_catches_a_signed_out_cli(tmp_path, monkeypatch):
+    binary = fake_bin(tmp_path, "codex", 'echo "Not logged in"; exit 1')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    probe = CodexCliAdapter.probe()
+    assert not probe.ok and "codex login" in probe.fix
+
+
+def test_codex_adapter_reports_a_signed_out_cli_instead_of_failing_oddly(tmp_path):
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", 'echo "Not logged in. Run codex login." >&2; exit 1')
+    reply = agent.send("go")
+    assert not reply.ok and "codex login" in reply.error
 
 
 # -- OpenAI API ------------------------------------------------------------
@@ -225,3 +286,34 @@ echo "fresh run ok"
     agent.turns = 1                      # pretend a session exists
     reply = agent.send("go")
     assert reply.ok and "fresh run ok" in reply.text
+
+
+def test_codex_adapter_prefers_the_last_message_file_over_scraped_stdout(tmp_path):
+    """Codex prints a live log; the final message is what duet must parse, so it
+    asks for it in a file and only falls back to stdout."""
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", r'''
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; fi
+  shift
+done
+echo "thinking... [2m dim ansi noise"
+printf '%s' '{"message":"the real envelope","verdict":"DONE"}' > "$out"
+''')
+    reply = agent.send("go")
+    assert reply.ok
+    assert reply.text == '{"message":"the real envelope","verdict":"DONE"}'
+    assert reply.meta["used_last_message_file"] is True
+
+
+def test_codex_adapter_disables_colour_so_output_stays_parseable(tmp_path, monkeypatch):
+    dump = tmp_path / "args.txt"
+    monkeypatch.setenv("ARGDUMP", str(dump))
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", 'printf "%s\\n" "$@" > "$ARGDUMP"; echo hi')
+    agent.send("go")
+    args = dump.read_text().splitlines()
+    assert args[args.index("--color") + 1] == "never"
+    assert args[args.index("-C") + 1] == str(tmp_path)
+    assert "-o" in args

@@ -39,8 +39,18 @@ else
 fi
 
 say ""
+if ! command -v claude >/dev/null 2>&1 || ! command -v codex >/dev/null 2>&1; then
+  say "duet drives two agent CLIs. Install whichever is missing:"
+  command -v claude >/dev/null 2>&1 || say "  npm install -g @anthropic-ai/claude-code"
+  command -v codex  >/dev/null 2>&1 || say "  npm install -g @openai/codex"
+  say "then sign both in with:  duet login     (no API keys involved)"
+  say ""
+fi
+
 if command -v duet >/dev/null 2>&1; then
   duet doctor || true
+  say ""
+  say "next:  duet login    then    duet run \"your task\" --gate \"your tests\""
 else
   say "duet installed, but it is not on your PATH yet."
   say "Add your user bin directory to PATH, then run: duet doctor"

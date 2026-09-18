@@ -101,15 +101,15 @@ class Config:
 
 
 def default_agents(prefer_codex: Optional[bool] = None) -> List[AgentSpec]:
-    """Claude Code on one side, ChatGPT on the other.
+    """Claude Code on one side, ChatGPT on the other — both signed in, not billed.
 
-    Codex gives the ChatGPT side its own tools, so it is preferred when present;
-    the plain API backend works everywhere and builds through patches instead.
+    Both defaults authenticate with the account you already pay for: `claude auth
+    login` for a Claude subscription, `codex login` for a ChatGPT one. No API key
+    is involved on either side. The key-based `openai-api` backend stays available
+    for anyone who prefers it, but you have to ask for it.
     """
     if prefer_codex is None:
-        from duet.adapters.base import Adapter
-
-        prefer_codex = bool(Adapter.which("codex")) and not os.environ.get("OPENAI_API_KEY")
+        prefer_codex = True
     return [
         AgentSpec(name="claude", backend="claude-code"),
         AgentSpec(name="gpt", backend="codex-cli" if prefer_codex else "openai-api"),

@@ -13,10 +13,15 @@ Either one can lead. Either one can say no. Neither one can finish alone.
 ```bash
 git clone https://github.com/shubharya-os/duet && cd duet
 pip install .
-duet doctor          # checks both sides are connected
-duet demo            # runs the whole loop with no keys and no network
+duet login           # signs in to Claude and ChatGPT — no API keys
+duet demo            # runs the whole loop offline, to show you what it does
 duet run "add retry with backoff to src/fetch.py, and a test that proves it" --gate "pytest -q"
 ```
+
+**No API keys.** Both sides authenticate with the subscription you already pay for —
+a Claude plan through `claude auth login`, a ChatGPT plan through `codex login`. Your
+credentials go to those two CLIs and their own browser sign-in; duet never sees them,
+never stores them, and has nothing to leak.
 
 ---
 
@@ -44,7 +49,8 @@ what the builder's blind spot produced, because it is a different blind spot.
 
 ## Install
 
-**Requirements:** Python 3.9+, and both sides connected.
+**Requirements:** Python 3.9+, Node (for the two agent CLIs), and a Claude plan and
+a ChatGPT plan.
 
 ```bash
 git clone https://github.com/shubharya-os/duet && cd duet
@@ -54,39 +60,53 @@ pip install .           # or: pipx install .
 Verified down to Python 3.9 with pip 21.2 and setuptools 58. If `duet` is not on
 your PATH afterwards, `python3 -m duet` is always equivalent.
 
-Then connect each side.
-
-**Claude Code** — the CLI, signed in once:
+Install the two agent CLIs:
 
 ```bash
-npm install -g @anthropic-ai/claude-code
-claude          # sign in, then quit
+npm install -g @anthropic-ai/claude-code @openai/codex
 ```
 
-**ChatGPT** — either backend works:
-
-| backend | how it builds | setup |
-|---|---|---|
-| `openai-api` *(default)* | writes files through `patches` in its envelope, applied by the harness | `export OPENAI_API_KEY=sk-...` |
-| `codex-cli` | edits the workspace directly with its own tools | `npm install -g @openai/codex` then `codex` to sign in |
-
-`openai-api` needs nothing but a key and still builds real files — the model
-returns complete file contents and duet writes them. `codex-cli` makes the two
-sides fully symmetrical. Pick either:
+Then sign both in. One command does both:
 
 ```bash
-duet init                              # pins config, uses the API backend
-duet init --gpt-backend codex-cli      # gives ChatGPT its own tools
+duet login
 ```
 
-Check it:
+It runs `claude auth login` and `codex login` for you, each of which opens its own
+browser sign-in. duet never handles a credential: it shells out, waits, and then asks
+each CLI whether it worked.
 
 ```bash
 duet doctor
 ```
 
-`doctor` tells you exactly which side is not connected and the command that fixes
-it. When both are green you are done setting up.
+```
+claude  (claude-code)
+  ✓ signed in (claudeai) (/opt/homebrew/bin/claude)
+
+gpt  (codex-cli)
+  ✓ Logged in using ChatGPT (/opt/homebrew/bin/codex)
+
+ready. try: duet run "your task here"
+```
+
+`doctor` asks each CLI for its real login state — `claude auth status` and
+`codex login status` — rather than checking that the binary exists. A binary that
+runs but is signed out is the single most common way this kind of tool wastes your
+time, and it is reported as not ready.
+
+### If you would rather use an API key
+
+The key-based path is still there, it is just not the default:
+
+```bash
+duet init --gpt-backend openai-api
+export OPENAI_API_KEY=sk-...
+```
+
+That backend has no tools of its own, so it builds by returning complete files in
+`patches` which the harness writes. It works fine — it is simply billed per token
+instead of covered by a plan you already have.
 
 ---
 
@@ -112,6 +132,7 @@ Other flags worth knowing:
 
 | flag | what it does |
 |---|---|
+| `--gpt-backend openai-api` | use an API key instead of a ChatGPT login |
 | `--start gpt` | ChatGPT leads and Claude Code reviews (the default is the reverse) |
 | `--swap 2` | the lead and reviewer trade places every 2 rounds |
 | `--rounds 20` | round limit (default 12) |
@@ -125,8 +146,9 @@ Other flags worth knowing:
 And the rest of the commands:
 
 ```bash
+duet login                 # sign both sides in (or `duet login claude` for one)
 duet demo                  # the full loop, scripted peers, no keys, no network
-duet doctor                # connection check with per-side fixes
+duet doctor                # real login check, with the exact fix per side
 duet sessions              # every session in this workspace
 duet report                # the last session's report
 duet report --transcript   # everything both of them actually said
@@ -266,8 +288,12 @@ Everything lands in `.duet/sessions/<id>/` in your workspace:
   `.duet/config.json` under the claude agent's `options.permission_mode`.
 - **Two agents cost roughly twice one agent, times the number of rounds.** `--rounds`
   is your budget control; the default of 12 is deliberately modest. Start there.
-- API keys are read from the environment or `.duet/.env`, never committed, and never
-  passed to the other side.
+- **duet never touches your credentials.** Each CLI owns its own sign-in and its own
+  token storage. If you use the optional API-key backend instead, the key is read
+  from the environment or `.duet/.env`, never committed, and never passed to the
+  other side.
+- **Your subscriptions are what pay for this.** Two agents across a dozen rounds is
+  real usage on both plans; `--rounds` is the throttle.
 
 ---
 
