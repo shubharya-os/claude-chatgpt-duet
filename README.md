@@ -351,14 +351,14 @@ can have changed while the session was dead.
 ## Does it actually work?
 
 [docs/QA.md](docs/QA.md) is the honest record: what ran live, what's only covered by
-stubs, and the **twenty real bugs** the live runs found — including a signed-out CLI
+stubs, and the **twenty-three real bugs** the live runs found — including a signed-out CLI
 that reported itself ready, and a `codex exec` that hung forever whenever stdin was a
 pipe.
 
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-219 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+239 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

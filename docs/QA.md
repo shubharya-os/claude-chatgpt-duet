@@ -237,6 +237,44 @@ It also caught two real defects in the throwaway fixture while blocked — a gua
 branches were identical, and a test file that never imported the function it tested, so
 the gate could not have distinguished working code from broken.
 
+## duet on duet, with two Claude models
+
+The ChatGPT side was out of quota, so this one ran `--pair claude:opus+claude:sonnet`
+— a real second opinion, from a different model, just not cross-vendor. It was sent
+after a false green in duet's own front door: `duet doctor` reported the ChatGPT side
+ready when the account was signed in but out of Codex allowance, so the user was told
+they were ready and the first ChatGPT turn of their session then died.
+
+**Both agents raised something worse before touching the bug they were sent for.** duet
+had auto-detected `pytest -q` on a machine where pytest lives only in a virtualenv, so
+the gate failed every turn — and a failing gate vetoes both agents, which made their
+own session unwinnable from the first move. They argued correctly, and reached
+arbitration, about a session that had already been decided. Two fixes came out of that:
+
+- Gate detection verifies the command can start — on PATH, or as a project-local
+  executable — and falls back to `<this python> -m pytest`, which is where pytest
+  usually is. If nothing runs, there is no gate and duet says so.
+- `duet run` refuses a gate that cannot start, in a second, naming both ways out.
+
+On the original bug they concluded something better than what was asked for. Nothing
+codex offers reports remaining quota without spending a model call, and a probe that
+burns the user's allowance to report on their allowance is not a probe. Rather than
+invent a parser for a file format one of them could not read — it said so, and refused
+— duet now makes a smaller true claim and remembers what the account itself said:
+
+- before any failure: `signed in — Codex usage quota not checked (reading it would
+  cost a model call)`
+- after the account says it is out: `signed in, but out of Codex usage quota until
+  2026-10-18 23:18 (the account said so at 2026-09-19 16:37)`, with the reset time
+  parsed from codex's own message, and forgotten the moment a turn succeeds.
+
+Verified live, because the account really was out of quota.
+
+One detail worth keeping: the usage-limit match only counts `ERROR` lines, because
+codex echoes the prompt back into its own output and duet prompts are full of words
+like "quota" — matching anywhere would let a task description about usage limits
+convince duet it had hit one.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,
