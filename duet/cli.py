@@ -296,6 +296,24 @@ def preflight(cfg: Config) -> List[str]:
     return problems
 
 
+def _same_vendor_fallback(cfg: Config):
+    """A pair that works using only the side that is currently usable."""
+    usable = set()
+    for spec in cfg.agents:
+        cls = REGISTRY.get(spec.backend)
+        if cls is None:
+            continue
+        probe = cls.probe(spec.options)
+        signed = probe.signed_in if probe.signed_in is not None else probe.ok
+        if probe.ok or signed:
+            usable.add(spec.backend)
+    if "claude-code" in usable and "codex-cli" not in usable:
+        return "claude:opus+claude:sonnet", "Claude alone can still pair two of its models:"
+    if "codex-cli" in usable and "claude-code" not in usable:
+        return "codex+codex", "ChatGPT alone can still pair two sessions:"
+    return None
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     root = str(Path(args.root).expanduser().resolve())
     loaded = load_env_file(root)
@@ -351,6 +369,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(ui.red(ui.bold("not ready yet")) + " — run " + ui.bold("duet login")
               + " to sign both sides in, then " + ui.bold("duet doctor") + " again")
+        # Not everyone has both subscriptions, and telling someone with one of
+        # them that duet is unusable is wrong: two models of the same family
+        # still review each other, and a reviewer with no memory of writing the
+        # code is a real reviewer. Say so rather than letting them give up.
+        fallback = _same_vendor_fallback(cfg)
+        if fallback:
+            pair, why = fallback
+            print()
+            print(ui.dim("Only have one of the two? ") + why)
+            print("  " + ui.bold('duet run "..." --pair %s' % pair))
+            print(ui.dim("  Two of the same family share more blind spots than two vendors do,"))
+            print(ui.dim("  but the rules that make this work do not depend on them differing."))
     return 0 if ok else 1
 
 

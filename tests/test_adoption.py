@@ -227,3 +227,52 @@ def test_a_still_broken_npm_run_keeps_the_old_message(tmp_path, monkeypatch, cap
 
     assert main(["setup", "-C", str(tmp_path), "--yes"]) == 1
     assert "did not finish cleanly" in capsys.readouterr().out
+
+
+def test_one_subscription_is_offered_a_pair_that_works(tmp_path, monkeypatch, capsys):
+    """Someone with a Claude plan and no ChatGPT plan was told duet was not
+    ready and given no way forward — when two Claude models pair perfectly well.
+    A reviewer with no memory of writing the code is a real reviewer."""
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    monkeypatch.setattr("duet.adapters.claude_code.ClaudeCodeAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(ok=True, detail="signed in")))
+    monkeypatch.setattr("duet.adapters.codex_cli.CodexCliAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(
+                            ok=False, signed_in=False, detail="not signed in", fix="codex login")))
+
+    assert main(["doctor", "-C", str(tmp_path)]) == 1      # still honestly not ready
+    out = capsys.readouterr().out
+    assert "claude:opus+claude:sonnet" in out
+    assert "Only have one of the two?" in out
+    # and it does not oversell it
+    assert "blind spots" in out
+
+
+def test_only_chatgpt_is_offered_the_other_pair(tmp_path, monkeypatch, capsys):
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    monkeypatch.setattr("duet.adapters.claude_code.ClaudeCodeAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(
+                            ok=False, signed_in=False, detail="not signed in",
+                            fix="claude auth login")))
+    monkeypatch.setattr("duet.adapters.codex_cli.CodexCliAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(ok=True, detail="signed in")))
+
+    assert main(["doctor", "-C", str(tmp_path)]) == 1
+    assert "codex+codex" in capsys.readouterr().out
+
+
+def test_no_fallback_is_offered_when_neither_side_works(tmp_path, monkeypatch, capsys):
+    """Suggesting a pair that also cannot run would be noise."""
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    for module in ("claude_code.ClaudeCodeAdapter", "codex_cli.CodexCliAdapter"):
+        monkeypatch.setattr("duet.adapters.%s.probe" % module,
+                            classmethod(lambda cls, config=None: Probe(
+                                ok=False, signed_in=False, detail="not signed in", fix="log in")))
+    assert main(["doctor", "-C", str(tmp_path)]) == 1
+    assert "Only have one of the two?" not in capsys.readouterr().out
