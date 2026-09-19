@@ -18,6 +18,43 @@ class AgentReply:
         return not self.error
 
 
+# A CLI that cannot start says nothing about whether you are signed in. These
+# are what the shell and the loader say when the binary is there but unusable —
+# usually a broken or missing `node` shadowing the working one on PATH.
+BROKEN_RUNTIME_MARKERS = (
+    "bad cpu type",
+    "exec format error",
+    "cannot execute",
+    "command not found",
+    "no such file or directory",
+    "env: node",
+    "dyld",
+    "symbol not found",
+)
+
+
+def looks_unrunnable(output: str) -> str:
+    """The reason this CLI could not start, or "" if it did start.
+
+    Reporting "not signed in" for a CLI that never ran sends people to a login
+    command that will fail the same way, with nothing to tell them why.
+    """
+    low = (output or "").lower()
+    for marker in BROKEN_RUNTIME_MARKERS:
+        if marker in low:
+            first = next((line.strip() for line in (output or "").splitlines() if line.strip()), "")
+            return first or marker
+    return ""
+
+
+RUNTIME_FIX = (
+    "that CLI could not start at all, so its sign-in state is unknown. It is "
+    "usually a broken `node` earlier on PATH than the working one — check "
+    "`node -v`, and if it fails, put a working node first (e.g. "
+    "/opt/homebrew/bin before /usr/local/bin)."
+)
+
+
 @dataclass
 class Probe:
     """What `duet doctor` reports for one backend."""

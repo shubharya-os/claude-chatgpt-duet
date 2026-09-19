@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from duet.adapters.base import Adapter, AgentReply, Probe
+from duet.adapters.base import RUNTIME_FIX, Adapter, AgentReply, Probe, looks_unrunnable
 
 DEFAULT_CANDIDATES = (
     os.environ.get("DUET_CODEX_BIN", ""),
@@ -62,6 +62,9 @@ def read_login_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], s
     except (OSError, subprocess.SubprocessError) as exc:
         return None, str(exc)
     out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    broken = looks_unrunnable(out)
+    if broken:
+        return None, "could not run codex: %s" % broken
     low = out.lower()
     if "not logged in" in low or "please log in" in low or "run `codex login`" in low:
         return False, out.splitlines()[0] if out else "not logged in"
@@ -217,9 +220,9 @@ class CodexCliAdapter(Adapter):
         if logged_in is False:
             return Probe(ok=False, detail="installed but not signed in (%s)" % detail, fix=LOGIN_HINT)
         if logged_in is None:
-            return Probe(
-                ok=False,
-                detail="could not read the login state: %s" % detail,
-                fix=LOGIN_HINT,
-            )
+            if detail.startswith("could not run"):
+                return Probe(ok=False, detail="installed at %s, but %s" % (binary, detail),
+                             fix=RUNTIME_FIX)
+            return Probe(ok=False, detail="could not read the login state: %s" % detail,
+                         fix=LOGIN_HINT)
         return Probe(ok=True, detail="%s (%s)" % (detail, binary))

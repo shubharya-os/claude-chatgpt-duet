@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from duet.adapters.base import Adapter, AgentReply, Probe
+from duet.adapters.base import RUNTIME_FIX, Adapter, AgentReply, Probe, looks_unrunnable
 
 DEFAULT_CANDIDATES = (
     os.environ.get("DUET_CLAUDE_BIN", ""),
@@ -45,6 +45,9 @@ def read_auth_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], st
     except (OSError, subprocess.SubprocessError) as exc:
         return None, str(exc)
     out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    broken = looks_unrunnable(out)
+    if broken:
+        return None, "could not run claude: %s" % broken
     try:
         start = out.index("{")
         data = json.loads(out[start : out.rindex("}") + 1])
@@ -203,11 +206,24 @@ class ClaudeCodeAdapter(Adapter):
         if logged_in is False:
             return Probe(ok=False, detail="installed but %s" % detail, fix=LOGIN_HINT)
         if logged_in is None:
+            # A CLI that cannot start is not a CLI that is signed out, and this
+            # has to be decided before falling back to --version, which fails
+            # the same way and would send the user to a login that cannot work.
+            if detail.startswith("could not run"):
+                return Probe(ok=False, detail="installed at %s, but %s" % (binary, detail),
+                             fix=RUNTIME_FIX)
             try:
                 proc = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30)
             except (OSError, subprocess.SubprocessError) as exc:
-                return Probe(ok=False, detail="found %s but could not run it: %s" % (binary, exc))
+                return Probe(ok=False, detail="found %s but could not run it: %s" % (binary, exc),
+                             fix=RUNTIME_FIX)
             if proc.returncode != 0:
+                version_noise = (proc.stdout or "") + (proc.stderr or "")
+                broken = looks_unrunnable(version_noise)
+                if broken:
+                    return Probe(ok=False,
+                                 detail="installed at %s, but could not run claude: %s" % (binary, broken),
+                                 fix=RUNTIME_FIX)
                 return Probe(ok=False, detail="%s --version exited %d" % (binary, proc.returncode),
                              fix=LOGIN_HINT)
             return Probe(

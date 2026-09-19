@@ -500,3 +500,46 @@ def test_output_with_no_error_line_falls_back_to_the_tail(tmp_path):
     agent.bin = fake_bin(tmp_path, "codex", 'echo "banner line" >&2; echo "something odd at the end" >&2; exit 2')
     reply = agent.send("go")
     assert "something odd at the end" in reply.error
+
+
+# --- a CLI that cannot start is not a CLI that is signed out ----------------
+
+BROKEN_RUNTIME = 'echo "env: node: Bad CPU type in executable" >&2; exit 126'
+
+
+def test_a_codex_that_cannot_start_is_not_reported_as_signed_out(tmp_path, monkeypatch):
+    """Reporting 'not signed in' for a CLI that never ran sends people to a
+    login command that fails the same way, with nothing to explain why. Found
+    on a real machine where a broken node shadowed the working one."""
+    binary = fake_bin(tmp_path, "codex", BROKEN_RUNTIME)
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    probe = CodexCliAdapter.probe()
+    assert not probe.ok
+    assert "could not run" in probe.detail
+    assert "Bad CPU type" in probe.detail
+    assert "codex login" not in probe.fix          # not the wrong advice
+    assert "node" in probe.fix                     # the actual cause
+
+
+def test_a_claude_that_cannot_start_is_not_reported_as_signed_out(tmp_path, monkeypatch):
+    binary = fake_bin(tmp_path, "claude", BROKEN_RUNTIME)
+    monkeypatch.setattr("duet.adapters.claude_code.Adapter.which", staticmethod(lambda *a: binary))
+    probe = ClaudeCodeAdapter.probe()
+    assert not probe.ok
+    assert "could not run" in probe.detail
+    assert "auth login" not in probe.fix
+    assert "node" in probe.fix
+
+
+@pytest.mark.parametrize("noise", [
+    "env: node: Bad CPU type in executable",
+    "exec format error",
+    "/usr/local/bin/node: command not found",
+    "dyld: symbol not found",
+])
+def test_every_unrunnable_signature_is_recognised(noise):
+    from duet.adapters.base import looks_unrunnable
+
+    assert looks_unrunnable(noise)
+    assert not looks_unrunnable("Logged in using ChatGPT")
+    assert not looks_unrunnable('{"loggedIn": true}')
