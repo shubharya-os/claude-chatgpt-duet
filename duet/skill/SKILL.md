@@ -15,7 +15,7 @@ loop that is allowed to say no, and gives that objection weight.
 ## Running it
 
 ```bash
-duet run "the task" --gate "pytest -q"
+{{DUET}} run "the task" --gate "pytest -q"
 ```
 
 Both agents take turns in the workspace until they agree. It never ends on one agent's
@@ -25,7 +25,7 @@ and the gate passing.
 To have the other model check work that already exists, give it that as the task:
 
 ```bash
-duet run "review the current diff against the task; fix what is actually wrong" \
+{{DUET}} run "review the current diff against the task; fix what is actually wrong" \
   --gate "pytest -q" --rounds 4
 ```
 
@@ -43,7 +43,7 @@ duet run "review the current diff against the task; fix what is actually wrong" 
   fix it. Running again until it approves is the exact failure this tool exists to
   prevent.
 - If `duet` is missing or a side is not signed in, say so and give the fix
-  (`duet doctor` prints it). Do not fall back to reviewing your own work and calling
+  (`{{DUET}} doctor` prints it). Do not fall back to reviewing your own work and calling
   it a second opinion.
 
 ## Reading the result

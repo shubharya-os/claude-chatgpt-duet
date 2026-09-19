@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -480,9 +481,26 @@ SKILL_TARGETS = [
 ]
 
 
+def duet_invocation() -> str:
+    """How to run duet from wherever it actually lives.
+
+    A spawned Claude Code or Codex session inherits whatever PATH it is given,
+    and duet is usually inside a venv or ~/.local/bin that is not on it. Writing
+    a bare `duet` into the skill files produced exactly that failure: the
+    assistant looked, could not find it, and correctly refused to review the
+    change itself instead. So the absolute path is baked in at install time.
+    """
+    found = shutil.which("duet")
+    if found:
+        return found
+    # Installed as a module without its entry point on PATH.
+    return "%s -m duet" % sys.executable
+
+
 def cmd_skill(args: argparse.Namespace) -> int:
     """Install `/duet` into Claude Code and Codex, plus the Claude Code skill."""
     source_dir = skill_dir()
+    invocation = duet_invocation()
     home = Path(args.dir).expanduser() if args.dir else Path.home()
 
     if args.action == "path":
@@ -491,7 +509,7 @@ def cmd_skill(args: argparse.Namespace) -> int:
     if args.action == "show":
         for label, filename, _, _ in SKILL_TARGETS:
             print(ui.bold("--- %s (%s) ---" % (label, filename)))
-            print((source_dir / filename).read_text(encoding="utf-8"))
+            print((source_dir / filename).read_text(encoding="utf-8").replace("{{DUET}}", invocation))
         return 0
 
     installed, skipped, failed = [], [], []
@@ -501,7 +519,7 @@ def cmd_skill(args: argparse.Namespace) -> int:
         if not source.is_file():
             failed.append((label, target, "packaged file missing: %s" % source))
             continue
-        body = source.read_text(encoding="utf-8")
+        body = source.read_text(encoding="utf-8").replace("{{DUET}}", invocation)
         if target.is_file():
             current = target.read_text(encoding="utf-8", errors="replace")
             if current == body:
@@ -545,6 +563,11 @@ def cmd_skill(args: argparse.Namespace) -> int:
         print(ui.dim("  ") + '"get a second opinion on this from Claude"')
         print()
         print(ui.dim("Either way it carries your conversation across, so you do not start cold."))
+        if not shutil.which("duet"):
+            print()
+            print(ui.yellow("note: ") + "`duet` is not on your PATH, so the installed files")
+            print("  call it as " + ui.bold(invocation) + " instead.")
+            print(ui.dim("  Re-run `duet skill install --force` if that ever moves."))
     return 0
 
 

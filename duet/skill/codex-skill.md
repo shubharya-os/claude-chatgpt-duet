@@ -9,7 +9,7 @@ asked for after that is the task.
 
 ## If the argument is `running` or `status`
 
-Run `duet status` and report it in one short paragraph: still going or finished, which
+Run `{{DUET}} status` and report it in one short paragraph: still going or finished, which
 round, who it is waiting on, what they are arguing about, whether the gate passes. Do not
 start a new session.
 
@@ -36,7 +36,7 @@ models agreeing.
 **3. Run it:**
 
 ```bash
-duet run "$ARGUMENTS" --context-file /tmp/duet-context.md --pair codex+claude
+{{DUET}} run "$ARGUMENTS" --context-file /tmp/duet-context.md --pair codex+claude
 ```
 
 `--pair codex+claude` puts you (ChatGPT) in the lead and Claude Code as reviewer, which
@@ -45,7 +45,7 @@ Claude lead.
 
 **4. Report back properly.** Whether both signed off and on what; what actually changed,
 read from the diff rather than relayed; the disagreement and how it resolved (see
-`duet report`); and your own view. If they agreed on something you think is wrong, say
+`{{DUET}} report`); and your own view. If they agreed on something you think is wrong, say
 so — you are the third opinion, not a courier.
 
 ## Rules
@@ -53,4 +53,4 @@ so — you are the third opinion, not a courier.
 - Never run this over uncommitted work the user cares about without saying so first —
   both agents edit the workspace. Offer a branch.
 - Do not re-run to get a nicer answer. Fix what was raised.
-- If a side is not signed in, run `duet doctor` and hand the user the fix it prints.
+- If a side is not signed in, run `{{DUET}} doctor` and hand the user the fix it prints.

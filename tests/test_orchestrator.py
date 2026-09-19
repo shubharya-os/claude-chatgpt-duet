@@ -272,7 +272,9 @@ def test_the_slash_commands_carry_the_thread_across():
         assert "--context-file" in text, filename
         assert "--gate" in text, filename
         assert "running" in text, filename          # /duet running is documented
-        assert "duet status" in text, filename
+        # The source is a template; the install step substitutes {{DUET}} for a
+        # path that actually resolves in the spawned session.
+        assert "{{DUET}} status" in text, filename
 
 
 def test_an_agent_cannot_start_another_duet_session(monkeypatch, tmp_path):
@@ -391,3 +393,30 @@ def test_status_says_so_when_there_is_nothing_to_report(tmp_path, capsys):
 
     assert main(["status", "-C", str(tmp_path)]) == 2
     assert "no sessions yet" in capsys.readouterr().out
+
+
+def test_the_installed_files_call_duet_by_a_path_that_resolves(tmp_path, monkeypatch):
+    """A spawned Claude Code session inherits whatever PATH it is given, and duet
+    usually lives in a venv that is not on it. A bare `duet` in the skill files
+    produced exactly that: the assistant looked, could not find it, and correctly
+    refused to review the change itself rather than fake a second opinion."""
+    from duet.cli import SKILL_TARGETS, main
+
+    monkeypatch.setattr("duet.cli.shutil.which", lambda name: None)   # duet not on PATH
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
+
+    for _, _, relative, _ in SKILL_TARGETS:
+        text = (tmp_path / relative).read_text()
+        assert "{{DUET}}" not in text, relative
+        assert "-m duet" in text, relative          # falls back to the module form
+
+
+def test_a_duet_on_path_is_used_as_is(tmp_path, monkeypatch):
+    from duet.cli import main
+
+    monkeypatch.setattr("duet.cli.shutil.which",
+                        lambda name: "/usr/local/bin/duet" if name == "duet" else None)
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
+    text = (tmp_path / ".claude" / "commands" / "duet.md").read_text()
+    assert "/usr/local/bin/duet run" in text
+    assert "-m duet" not in text

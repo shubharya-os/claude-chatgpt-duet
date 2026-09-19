@@ -8,7 +8,7 @@ The user typed `/duet $ARGUMENTS`.
 
 ## If the argument is `running` or `status`
 
-Run `duet status` and report it in one short paragraph: is it still going, which round,
+Run `{{DUET}} status` and report it in one short paragraph: is it still going, which round,
 who it is waiting on, what they are arguing about, and whether the gate is passing.
 Nothing else. Do not start a new session.
 
@@ -45,18 +45,18 @@ finding none, say so in your reply: "done" is then only the two of them agreeing
 **3. Run it:**
 
 ```bash
-duet run "$ARGUMENTS" --context-file /tmp/duet-context.md
+{{DUET}} run "$ARGUMENTS" --context-file /tmp/duet-context.md
 ```
 
 Add `--pair codex+claude` if the user wants ChatGPT to lead. It streams; let it. If it
-is very long the user can open another terminal and run `duet status`.
+is very long the user can open another terminal and run `{{DUET}} status`.
 
 **4. Report back like a colleague, not a log.** When it finishes:
 
 - Say whether both agents signed off, and on what.
 - Say what actually changed — read the diff yourself, do not just relay their summary.
 - Pull out the disagreement. The interesting part of any session is what one of them
-  objected to and how it got resolved; that is in `duet report`.
+  objected to and how it got resolved; that is in `{{DUET}} report`.
 - Say what you think. If they agreed on something you believe is wrong, say that
   plainly. Two agents agreeing is not proof, and you are the third opinion.
 - If it ended without consensus, the report's "what is left" section is the useful part.
@@ -67,6 +67,6 @@ is very long the user can open another terminal and run `duet status`.
   Both agents edit the workspace directly. Offer a branch.
 - **Do not re-run it to get a nicer answer.** If the reviewer raised something real, fix
   it. Re-rolling until it approves is exactly the failure this tool exists to prevent.
-- If `duet` is not installed or a side is not signed in, run `duet doctor` and give the
+- If `duet` is not installed or a side is not signed in, run `{{DUET}} doctor` and give the
   user the fix it prints. Do not quietly review your own work and call it a second
   opinion.
