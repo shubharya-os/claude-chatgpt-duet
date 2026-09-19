@@ -20,18 +20,20 @@ quietly agree they're finished.
 curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
 ```
 
-That installs duet and then prints the one command that finishes the job:
+That does the whole thing: installs duet, then runs `duet setup`, which installs
+the two agent CLIs if you do not have them, signs you in to both (your Claude and
+ChatGPT plans — **no API keys**), and adds `/duet` to Claude Code and Codex.
+
+Piped from `curl` the installer's own stdin *is* the script, so it reconnects to
+your terminal to ask the questions setup needs. Where there is no terminal at all
+— CI, a container — it installs `/duet` anyway and prints the one command left:
 
 ```bash
 duet setup
 ```
 
-It has to be a separate step. Piped from `curl`, the installer's own stdin *is*
-the script, so it has no terminal to ask you anything in — and `duet setup` asks
-before installing things and hands you off to two browser sign-ins. Run it and it
-installs the two agent CLIs if you do not have them, signs you in to both (your
-Claude and ChatGPT plans — **no API keys**), and adds `/duet` to Claude Code and
-Codex. Both steps skip whatever is already done, so both are safe to re-run.
+Everything skips whatever is already done, so re-running is safe and is how you
+update.
 
 <details>
 <summary>or with pip, if you would rather not pipe a script to a shell</summary>
