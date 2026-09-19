@@ -12,7 +12,11 @@ is worse than no gate at all.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -63,6 +67,44 @@ def _has_python_tests(root: Path) -> bool:
     return any(root.glob("test_*.py")) or any(root.glob("*_test.py"))
 
 
+def _runnable(command: str, root: str) -> bool:
+    """Is the first word of this command something that exists?
+
+    A detected gate that cannot start fails every single turn, which blocks
+    consensus for the whole session — worse than having no gate, because the
+    pair can never finish however right they are. Found by both agents in a
+    live session: `pytest -q` was detected on a machine where pytest is only
+    inside a virtualenv, so the gate could never pass.
+    """
+    first = command.split()[0]
+    if shutil.which(first):
+        return True
+    # A relative launcher like ./gradlew
+    candidate = Path(root) / first
+    return candidate.is_file() and os.access(str(candidate), os.X_OK)
+
+
+def _python_module_form(command: str) -> Optional[str]:
+    """`pytest -q` becomes `<this python> -m pytest -q`, when that works.
+
+    pytest is usually installed into a virtualenv rather than onto PATH, and
+    the interpreter running duet is the one most likely to have it.
+    """
+    first, _, rest = command.partition(" ")
+    if first not in ("pytest",):
+        return None
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", first, "--version"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return "%s -m %s%s" % (sys.executable, first, (" " + rest) if rest else "")
+
+
 def detect(root: str) -> Optional[str]:
     """A test command this project plausibly has, or None.
 
@@ -71,7 +113,15 @@ def detect(root: str) -> Optional[str]:
     """
     base = Path(root).expanduser().resolve()
 
-    script = _package_json_script(base)
+    def usable(command: Optional[str]) -> Optional[str]:
+        """Only hand back a command that can actually start."""
+        if not command:
+            return None
+        if _runnable(command, str(base)):
+            return command
+        return _python_module_form(command)
+
+    script = usable(_package_json_script(base))
     if script:
         return script
 
@@ -84,10 +134,13 @@ def detect(root: str) -> Optional[str]:
             continue
         if command.startswith("pytest") and not _has_python_tests(base):
             continue
-        return command
+        found = usable(command)
+        if found:
+            return found
+        continue
 
     if _has_python_tests(base):
-        return "pytest -q"
+        return usable("pytest -q")
     return None
 
 
