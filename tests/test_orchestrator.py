@@ -204,14 +204,33 @@ def test_a_broken_decider_cannot_close_a_blocker(tmp_path):
 
 
 def test_install_puts_each_file_where_its_host_looks_for_it(tmp_path):
-    """`/duet` only exists if the file lands in the exact directory its host
-    scans — a skill in the wrong folder is silently nothing at all."""
+    """A skill in the wrong folder is silently nothing at all.
+
+    Codex reads ~/.codex/skills/<name>/SKILL.md — confirmed by finding duet in
+    the output of `codex debug prompt-input` — not ~/.codex/prompts, which was
+    a guess and did not work on its own.
+    """
     from duet.cli import main
 
     assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
     assert (tmp_path / ".claude" / "skills" / "duet" / "SKILL.md").is_file()
     assert (tmp_path / ".claude" / "commands" / "duet.md").is_file()
+    assert (tmp_path / ".codex" / "skills" / "duet" / "SKILL.md").is_file()
     assert (tmp_path / ".codex" / "prompts" / "duet.md").is_file()
+
+
+def test_the_codex_skill_carries_the_frontmatter_codex_reads(tmp_path):
+    """Codex enumerates name + description out of the frontmatter; without both
+    the skill exists on disk and is invisible in the session."""
+    from duet.cli import main, skill_dir
+
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
+    text = (tmp_path / ".codex" / "skills" / "duet" / "SKILL.md").read_text()
+    header = text.split("---")[1]
+    assert "name: duet" in header
+    assert "description:" in header
+    assert "second opinion" in header.lower()
+    assert "--context-file" in text          # the handoff still happens
 
 
 def test_installing_twice_changes_nothing_and_an_edit_is_not_clobbered(tmp_path):

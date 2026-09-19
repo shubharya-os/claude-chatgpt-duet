@@ -22,10 +22,16 @@ duet login          # your Claude and ChatGPT plans — no API keys
 duet skill install  # adds /duet to Claude Code and Codex
 ```
 
-Then, in the middle of any Claude Code or Codex session:
+Then, in the middle of any Claude Code session:
 
 ```
 /duet add retry with backoff to the fetch client
+```
+
+or in Codex, where it is a skill rather than a slash command:
+
+```
+$duet add retry with backoff to the fetch client
 ```
 
 It takes the conversation you are already in — what you are building, what you ruled
@@ -41,14 +47,19 @@ sign off. You never leave the thread, and you never re-explain anything.
 
 ## `/duet` — the part you actually use
 
-`duet skill install` puts `/duet` in both assistants, in the exact directories each one
-scans:
+`duet skill install` places four files, each in the exact directory its host scans:
 
 | file | what it gives you |
 |---|---|
 | `~/.claude/commands/duet.md` | `/duet` in Claude Code |
-| `~/.codex/prompts/duet.md` | `/duet` in Codex |
-| `~/.claude/skills/duet/SKILL.md` | lets Claude Code reach for duet on its own, when a second opinion would help |
+| `~/.claude/skills/duet/SKILL.md` | Claude Code reaching for duet on its own |
+| `~/.codex/skills/duet/SKILL.md` | duet in Codex — say `$duet`, or just ask for a second opinion |
+| `~/.codex/prompts/duet.md` | `/duet` on Codex versions that read that directory |
+
+Codex has skills rather than slash commands, so there it is `$duet` or plain English
+("get a second opinion on this from Claude"). You can confirm Codex picked it up with
+`codex debug prompt-input x | grep duet` — that is how the location above was verified,
+after `~/.codex/prompts` alone turned out not to be enough.
 
 The handoff is the point. Before it runs anything, your assistant writes down what it
 already knows — the goal in your words, decisions already made and ruled out, what it

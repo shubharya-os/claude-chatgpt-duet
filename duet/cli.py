@@ -442,11 +442,19 @@ def skill_source() -> Path:
 # host to find it. `/duet` only exists if the file is in the right directory.
 SKILL_TARGETS = [
     ("Claude Code skill", "SKILL.md", Path(".claude") / "skills" / "duet" / "SKILL.md",
-     "so Claude Code can decide to use duet on its own"),
+     "so Claude Code can reach for duet on its own"),
     ("Claude Code /duet", "claude-command.md", Path(".claude") / "commands" / "duet.md",
      "so you can type /duet in Claude Code"),
-    ("Codex /duet", "codex-prompt.md", Path(".codex") / "prompts" / "duet.md",
-     "so you can type /duet in Codex"),
+    # Codex enumerates ~/.codex/skills/*/SKILL.md into its own prompt — you can
+    # see it there with `codex debug prompt-input` — so this is the path that is
+    # known to work. It is triggered by `$duet` or by matching the description,
+    # not by a slash command.
+    ("Codex skill", "codex-skill.md", Path(".codex") / "skills" / "duet" / "SKILL.md",
+     "so Codex picks up duet — say $duet, or just ask for a second opinion"),
+    # Custom slash-command prompts are a newer Codex feature and this location is
+    # not confirmed on every version, so it is installed but not promised.
+    ("Codex /duet (if supported)", "codex-prompt.md", Path(".codex") / "prompts" / "duet.md",
+     "gives /duet on Codex versions that read ~/.codex/prompts"),
 ]
 
 
@@ -504,12 +512,17 @@ def cmd_skill(args: argparse.Namespace) -> int:
 
     if installed:
         print()
-        print("Open a new Claude Code or Codex session and type " + ui.bold("/duet") + ":")
+        print("In a new " + ui.bold("Claude Code") + " session:")
         print(ui.dim("  /duet ") + "add retry with backoff to the fetch client")
         print(ui.dim("  /duet ") + "running       " + ui.dim("— check on a session already going"))
         print(ui.dim("  /duet ") + "review        " + ui.dim("— second opinion on the current diff"))
         print()
-        print(ui.dim("It carries your conversation across, so you do not start cold."))
+        print("In a new " + ui.bold("Codex") + " session, duet is a skill rather than a slash")
+        print("command, so name it or just ask:")
+        print(ui.dim("  $duet ") + "add retry with backoff to the fetch client")
+        print(ui.dim("  ") + '"get a second opinion on this from Claude"')
+        print()
+        print(ui.dim("Either way it carries your conversation across, so you do not start cold."))
     return 0
 
 
