@@ -275,6 +275,50 @@ codex echoes the prompt back into its own output and duet prompts are full of wo
 like "quota" — matching anywhere would let a task description about usage limits
 convince duet it had hit one.
 
+## Hardening the first five minutes
+
+Two Claude models, four rounds, consensus — and eight breakages in the install path,
+every one found by running it rather than reading it. None had been caught by the test
+suite. 241 tests became 278.
+
+**The one that matters most was mine, in the code I wrote to prevent exactly it.**
+`duet skill install` printed four green ticks, said "In a new Claude Code session:
+/duet ...", and exited 0 — *after* `duet_invocation()` had proved that all three ways
+of running duet fail. The fallback returned the most explicit candidate with a comment
+about naming a real path, and the caller reported success regardless. On a machine
+where none of them resolve, duet would have told you `/duet` was ready when it was not.
+That is this project's own failure class, written into the function added to stop it.
+
+It now keeps the files, reports red, explains why a spawned session could not run the
+command, gives the two-line fix, and returns 1 so `duet setup` cannot print "done."
+over the top.
+
+The others: `install.sh` accepted anything executable, so a duet whose interpreter had
+been upgraded out from under it passed the check and failed on use; an older `duet`
+earlier on PATH silently shadowed a new install; a half-installed venv was not repaired
+on a second run, because pip short-circuits a VCS install as "already satisfied"
+without `--upgrade`.
+
+### What the two of them did that is worth recording
+
+- Opus raised an issue **against itself** — that CI could not enforce the POSIX-sh
+  claim without `dash` and `shellcheck` installed — and Sonnet fixed it by adding both
+  to each CI leg.
+- Sonnet could not run python in its sandbox. It said so, hand-traced the changes
+  against the new tests, checked `git diff --stat` for deletions rather than believing
+  "nothing was weakened", and deferred to the harness's gate result instead of claiming
+  to have tested.
+- Opus, on its final check, went back to `install.sh` rather than rubber-stamp Sonnet's
+  sign-off, and found two more.
+- Opus flagged a caveat it could not resolve: neither had ever actually run shellcheck.
+  "I read the file against shellcheck's default-severity checks and expect nothing to
+  fire — but expect is not ran." It declined to raise it as a blocking issue, since the
+  CI step already added was the fix and nothing further was available to either of them.
+
+  That caveat has since been closed by hand: shellcheck installed, run against
+  `install.sh`, clean. `dash -n` passes too. Expected and observed now agree, which was
+  the whole of the distinction being drawn.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,
