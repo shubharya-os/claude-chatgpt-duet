@@ -484,7 +484,11 @@ def cmd_login(args: argparse.Namespace) -> int:
                 print("    " + ui.yellow("try: ") + after.fix)
 
     print()
-    return cmd_doctor(args) if not failures else 1
+    if failures:
+        return 1
+    if getattr(args, "skip_summary", False):
+        return 0
+    return cmd_doctor(args)
 
 
 def skill_dir() -> Path:
@@ -627,6 +631,127 @@ def cmd_skill(args: argparse.Namespace) -> int:
             print(ui.yellow("note: ") + "`duet` is not on your PATH, so the installed files")
             print("  call it as " + ui.bold(invocation) + " instead.")
             print(ui.dim("  Re-run `duet skill install --force` if that ever moves."))
+    return 0
+
+
+AGENT_PACKAGES = {
+    "claude": "@anthropic-ai/claude-code",
+    "codex": "@openai/codex",
+}
+
+
+def _missing_agent_clis() -> List[str]:
+    return [name for name in ("claude", "codex") if not Adapter.which(name)]
+
+
+def _ask(question: str, assume_yes: bool) -> bool:
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input("%s [y/N] " % question).strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Everything between `pip install` and a working `/duet`, in one command.
+
+    Four steps used to be four things to remember, and the one people skipped
+    was whichever came last. This runs them in order, skips what is already
+    done, and stops at the first thing it cannot do for you.
+    """
+    step = 0
+
+    def heading(text: str) -> None:
+        nonlocal step
+        step += 1
+        print()
+        print(ui.bold("%d. %s" % (step, text)))
+
+    print(ui.bold("duet setup") + ui.dim("  — agent CLIs, sign-ins, and /duet"))
+
+    # 1 -----------------------------------------------------------------
+    heading("the two agent CLIs")
+    missing = _missing_agent_clis()
+    if not missing:
+        print(ui.green("   ✓ ") + "claude and codex are both installed")
+    else:
+        packages = [AGENT_PACKAGES[name] for name in missing]
+        command = "npm install -g %s" % " ".join(packages)
+        print("   missing: %s" % ", ".join(missing))
+        if not Adapter.which("npm"):
+            print(ui.red("   ✗ ") + "npm is not installed, so I cannot install them.")
+            print("     Install Node (which brings npm), then run:")
+            print("       " + ui.bold(command))
+            return 1
+        print(ui.dim("   this installs them globally with npm:"))
+        print("       " + ui.bold(command))
+        if not _ask("   run it?", args.yes):
+            print(ui.yellow("   skipped") + " — run that yourself, then `duet setup` again.")
+            return 1
+        code = subprocess.call(command, shell=True)
+        if code != 0 or _missing_agent_clis():
+            print(ui.red("   ✗ ") + "that did not finish cleanly. Run it yourself and re-run setup.")
+            return 1
+        print(ui.green("   ✓ ") + "installed")
+
+    # 2 -----------------------------------------------------------------
+    heading("sign in to both")
+    print(ui.dim("   your Claude and ChatGPT plans — no API keys. Each CLI opens its"))
+    print(ui.dim("   own browser sign-in; duet never sees a credential."))
+    login_args = argparse.Namespace(root=args.root, quiet=args.quiet, json=False,
+                                    agent=None, force=False, skip_summary=True)
+    cmd_login(login_args)
+
+    # Ask the narrow question directly. `duet login` exits on readiness, which
+    # is right for scripting but wrong here: an exhausted allowance is not a
+    # failed sign-in, and reading it as one stopped setup before installing
+    # /duet — the step that needs no quota at all.
+    cfg_now = load_config(str(Path(args.root).expanduser().resolve()))
+    not_signed_in = []
+    for spec in cfg_now.agents:
+        cls = REGISTRY.get(spec.backend)
+        if cls is None:
+            continue
+        probe = cls.probe(spec.options)
+        # None means the probe did not answer the narrow question, so fall back
+        # to readiness — the same reading `duet login` uses.
+        signed = probe.signed_in if probe.signed_in is not None else probe.ok
+        if not signed:
+            not_signed_in.append((spec.name, probe))
+    if not_signed_in:
+        print()
+        for name, probe in not_signed_in:
+            print(ui.red("   ✗ ") + "%s: %s" % (name, probe.detail))
+            if probe.fix:
+                print("     " + ui.yellow("fix: ") + probe.fix)
+        print()
+        print(ui.yellow("   finish the sign-ins above, then run ") + ui.bold("duet setup")
+              + ui.yellow(" again."))
+        return 1
+    for spec in cfg_now.agents:
+        cls = REGISTRY.get(spec.backend)
+        probe = cls.probe(spec.options) if cls else None
+        if probe and probe.signed_in is True and not probe.ok:
+            print(ui.yellow("   ! ") + "%s: %s" % (spec.name, probe.detail))
+            print(ui.dim("     signed in, so setup continues — this does not affect /duet."))
+
+    # 3 -----------------------------------------------------------------
+    heading("install /duet into Claude Code and Codex")
+    skill_args = argparse.Namespace(root=args.root, quiet=args.quiet, json=False,
+                                    action="install", dir=None, force=args.force)
+    if cmd_skill(skill_args) != 0:
+        return 1
+
+    # 4 -----------------------------------------------------------------
+    print()
+    print(ui.green(ui.bold("done.")))
+    print("Open a new Claude Code session and type " + ui.bold("/duet")
+          + ", or in Codex " + ui.bold("$duet") + ".")
+    print(ui.dim("Nothing to remember: it takes the conversation you are already in."))
     return 0
 
 
@@ -1704,6 +1829,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument("--force", action="store_true", help="re-run the sign-in even if it looks connected")
     p_login.set_defaults(func=cmd_login)
 
+    p_setup = sub.add_parser("setup", help="one command: agent CLIs, sign-ins, and /duet")
+    common(p_setup)
+    p_setup.add_argument("-y", "--yes", action="store_true",
+                         help="do not ask before installing the agent CLIs")
+    p_setup.add_argument("--force", action="store_true",
+                         help="overwrite an existing /duet that has been edited")
+    p_setup.set_defaults(func=cmd_setup)
+
     p_skill = sub.add_parser("skill", help="install /duet into Claude Code and Codex")
     common(p_skill)
     p_skill.add_argument("action", nargs="?", default="install",
@@ -1789,9 +1922,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()
-        print("\n" + ui.dim("first time?  ") + ui.bold("duet login") + ui.dim("  →  ")
-              + ui.bold("duet skill install") + ui.dim("  →  then type ")
-              + ui.bold("/duet") + ui.dim(" in Claude Code or Codex"))
+        print("\n" + ui.dim("first time?  ") + ui.bold("duet setup")
+              + ui.dim("  does the lot, then type ") + ui.bold("/duet")
+              + ui.dim(" in Claude Code or ") + ui.bold("$duet") + ui.dim(" in Codex"))
         print(ui.dim("not sure it works?  ") + ui.bold("duet demo")
               + ui.dim("  runs the whole loop offline, no keys, no network"))
         return 0

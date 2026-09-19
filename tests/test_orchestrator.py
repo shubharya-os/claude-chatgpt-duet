@@ -496,3 +496,53 @@ def test_the_installed_invocation_is_one_that_has_been_run(tmp_path, monkeypatch
                     text=True, cwd=str(tmp_path), timeout=60)
     assert proc.returncode == 0, proc.stderr
     assert "duet" in proc.stdout.lower()
+
+
+def test_setup_is_not_stopped_by_a_quota_problem(tmp_path, monkeypatch, capsys):
+    """An exhausted allowance is not a failed sign-in. Reading `duet login`'s
+    exit code — which answers readiness, deliberately — as a sign-in failure
+    stopped setup before installing /duet, the one step needing no quota."""
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    def probe(cls, config=None):
+        if cls.backend == "codex-cli":
+            return Probe(ok=False, signed_in=True, detail="out of Codex usage quota",
+                         fix="wait for the reset")
+        return Probe(ok=True, detail="signed in")
+
+    for module, backend in (("claude_code.ClaudeCodeAdapter", "claude-code"),
+                            ("codex_cli.CodexCliAdapter", "codex-cli")):
+        monkeypatch.setattr("duet.adapters.%s.probe" % module,
+                            classmethod(lambda cls, config=None: probe(cls, config)))
+    monkeypatch.setattr("duet.cli.Adapter.which", staticmethod(lambda *a: "/usr/bin/true"))
+
+    home = tmp_path / "home"
+    monkeypatch.setattr("duet.cli.Path.home", staticmethod(lambda: home))
+
+    assert main(["setup", "-C", str(tmp_path), "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "out of Codex usage quota" in out          # said, not hidden
+    assert "setup continues" in out
+    assert (home / ".claude" / "commands" / "duet.md").is_file()
+
+
+def test_setup_stops_when_a_side_is_genuinely_signed_out(tmp_path, monkeypatch, capsys):
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    def probe(cls, config=None):
+        if cls.backend == "codex-cli":
+            return Probe(ok=False, signed_in=False, detail="not signed in",
+                         fix="codex login")
+        return Probe(ok=True, detail="signed in")
+
+    for module in ("claude_code.ClaudeCodeAdapter", "codex_cli.CodexCliAdapter"):
+        monkeypatch.setattr("duet.adapters.%s.probe" % module,
+                            classmethod(lambda cls, config=None: probe(cls, config)))
+    monkeypatch.setattr("duet.cli.Adapter.which", staticmethod(lambda *a: "/usr/bin/true"))
+    monkeypatch.setattr("duet.cli.subprocess.call", lambda *a, **k: 0)
+    monkeypatch.setattr("duet.cli.Path.home", staticmethod(lambda: tmp_path / "home"))
+
+    assert main(["setup", "-C", str(tmp_path), "--yes"]) == 1
+    assert "codex login" in capsys.readouterr().out

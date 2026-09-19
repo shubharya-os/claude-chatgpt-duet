@@ -18,9 +18,13 @@ quietly agree they're finished.
 
 ```bash
 pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
-duet login          # your Claude and ChatGPT plans — no API keys
-duet skill install  # adds /duet to Claude Code and Codex
+duet setup
 ```
+
+`duet setup` does the rest: installs the two agent CLIs if you do not have them,
+signs you in to both (your Claude and ChatGPT plans — **no API keys**), and adds
+`/duet` to Claude Code and Codex. It skips whatever is already done, so it is safe
+to re-run.
 
 Then, in the middle of any Claude Code session:
 
@@ -130,8 +134,16 @@ can only agree by argument.
 
 ```bash
 pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
+duet setup
+```
+
+That one command installs the agent CLIs if missing, runs both sign-ins, and
+installs `/duet`. If you would rather do it by hand:
+
+```bash
 npm install -g @anthropic-ai/claude-code @openai/codex
 duet login
+duet skill install
 ```
 
 <details>
