@@ -591,3 +591,238 @@ def test_a_genuinely_broken_cli_still_reports_honestly(tmp_path, monkeypatch):
     probe = CodexCliAdapter.probe()
     assert not probe.ok
     assert "could not run" in probe.detail
+
+
+# --- signed in is not the same as having quota left -------------------------
+#
+# A ChatGPT account can be signed in and out of Codex allowance at the same
+# time. `codex login status` answers the first question and says nothing about
+# the second, so doctor used to report "ready" and the first turn died.
+
+USAGE_LIMIT = ("ERROR: You've hit your usage limit. Upgrade to Plus to continue "
+               "using Codex (https://chatgpt.com/explore/plus), or try again at "
+               "Oct 18th, 2026 11:18 PM.")
+
+
+def state_dir() -> Path:
+    return Path(os.environ["DUET_STATE_DIR"])
+
+
+def note_file() -> Path:
+    from duet.adapters.codex_cli import QUOTA_NOTE
+    return state_dir() / QUOTA_NOTE
+
+
+def test_codex_probe_does_not_claim_quota_it_has_not_checked(tmp_path, monkeypatch):
+    """The signed-in line may only claim what `codex login status` proves."""
+    binary = fake_bin(tmp_path, "codex", 'echo "Logged in using ChatGPT"')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    probe = CodexCliAdapter.probe()
+    assert probe.ok
+    assert probe.signed_in is True
+    assert "quota not checked" in probe.detail
+
+
+def test_a_usage_limit_is_written_down_when_it_happens(tmp_path):
+    """The account itself is the only cheap source of truth about the
+    allowance, and it only speaks when the limit is hit. Keep what it said."""
+    import json
+
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", "cat >&2 <<'MSG'\n%s\nMSG\nexit 1\n" % USAGE_LIMIT)
+    reply = agent.send("go")
+
+    assert not reply.ok and "usage limit" in reply.error
+    assert "duet doctor" in reply.error            # says what will happen next
+    from datetime import datetime
+    note = json.loads(note_file().read_text())
+    assert "usage limit" in note["message"]
+    assert datetime.fromtimestamp(note["resets_at"]).strftime("%Y-%m-%d %H:%M") \
+        == "2026-10-18 23:18"
+
+
+def test_doctor_refuses_to_say_ready_while_the_recorded_limit_is_in_force(tmp_path, monkeypatch):
+    from duet.adapters import codex_cli
+
+    binary = fake_bin(tmp_path, "codex", 'echo "Logged in using ChatGPT"')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    codex_cli.record_usage_limit(USAGE_LIMIT.replace("Oct 18th, 2026", "Oct 18th, 2099"))
+
+    probe = CodexCliAdapter.probe()
+    assert not probe.ok
+    assert "out of Codex usage quota" in probe.detail
+    assert "2099" in probe.detail                        # the deadline it checked
+    assert "--pair claude:opus+claude:sonnet" in probe.fix
+    assert str(note_file()) in probe.fix                 # and how to overrule it
+    # out of quota is not signed out, and `duet login` must not confuse the two
+    assert probe.signed_in is True
+    assert "codex login" not in probe.fix
+
+
+def test_a_recorded_limit_whose_reset_has_passed_is_forgotten(tmp_path, monkeypatch):
+    from duet.adapters import codex_cli
+
+    binary = fake_bin(tmp_path, "codex", 'echo "Logged in using ChatGPT"')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    codex_cli.record_usage_limit(USAGE_LIMIT.replace("Oct 18th, 2026", "Oct 18th, 2020"))
+
+    probe = CodexCliAdapter.probe()
+    assert probe.ok and "quota not checked" in probe.detail
+    assert not note_file().exists()             # and not carried forward
+
+
+def test_a_limit_with_no_stated_reset_is_reported_without_blocking(tmp_path, monkeypatch):
+    """Unknown is not the same as exhausted. Say what is known, and do not
+    lock the user out of the one turn that would settle it."""
+    from duet.adapters import codex_cli
+
+    binary = fake_bin(tmp_path, "codex", 'echo "Logged in using ChatGPT"')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    codex_cli.record_usage_limit("ERROR: You've hit your usage limit.")
+
+    probe = CodexCliAdapter.probe()
+    assert probe.ok                                       # not a claim of exhaustion
+    assert "quota not checked" in probe.detail
+    assert "hit the usage limit" in probe.detail
+    assert "--pair claude+gpt" in probe.detail            # names the way round it
+
+
+def test_a_turn_that_succeeds_clears_the_recorded_limit(tmp_path):
+    from duet.adapters import codex_cli
+
+    codex_cli.record_usage_limit(USAGE_LIMIT.replace("2026", "2099"))
+    assert note_file().exists()
+
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", 'echo "codex says hi"')
+    assert agent.send("go").ok
+    assert not note_file().exists()
+
+
+def test_a_prompt_that_talks_about_usage_limits_is_not_mistaken_for_one(tmp_path):
+    """codex echoes the prompt into its own output, and duet's prompts are full
+    of words like "quota". Matching anywhere would let a task description about
+    usage limits convince duet the account had hit one."""
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", r'''
+printf '%s\n' "$@" >&2
+echo "ERROR: disk full" >&2
+exit 1
+''')
+    reply = agent.send("fix the doctor that ignores the Codex usage limit quota")
+    assert "disk full" in reply.error
+    assert not note_file().exists()
+
+
+def test_the_reset_time_codex_actually_prints_is_understood():
+    from duet.adapters.codex_cli import parse_reset_at
+
+    at = parse_reset_at(USAGE_LIMIT)
+    assert at is not None
+    from datetime import datetime
+    assert datetime.fromtimestamp(at).strftime("%Y-%m-%d %H:%M") == "2026-10-18 23:18"
+    # no deadline stated is a real answer, not a parse failure to paper over
+    assert parse_reset_at("ERROR: You've hit your usage limit.") is None
+    assert parse_reset_at("") is None
+
+
+def test_the_reset_time_is_read_without_help_from_the_locale():
+    """`strptime` reads %b and %p through LC_TIME, so on a machine set to a
+    non-English locale it refuses "Oct" and "PM" — which codex prints whatever
+    the locale is set to. parse_reset_at therefore reads the month and the
+    meridiem itself; these are the shapes it has to cover."""
+    from datetime import datetime
+    from duet.adapters.codex_cli import parse_reset_at
+
+    def when(text):
+        at = parse_reset_at("try again at %s" % text)
+        return datetime.fromtimestamp(at).strftime("%Y-%m-%d %H:%M") if at else None
+
+    assert when("Oct 18th, 2026 11:18 PM") == "2026-10-18 23:18"
+    assert when("October 18, 2026 23:18") == "2026-10-18 23:18"
+    assert when("2026-10-18 23:18") == "2026-10-18 23:18"
+    assert when("Oct 18, 2026 12:30 AM") == "2026-10-18 00:30"
+    assert when("Oct 18, 2026 12:30 PM") == "2026-10-18 12:30"
+    assert when("Oct 18, 2026") == "2026-10-18 00:00"
+    assert when("Frobsday the 40th") is None         # nonsense stays unknown
+    assert when("Oct 40, 2026 11:18 PM") is None     # and so does an impossible date
+
+
+def test_duet_login_does_not_answer_a_quota_problem_with_a_browser(tmp_path, monkeypatch, capsys):
+    """`duet login` ran the CLI's browser sign-in for any failed probe, then
+    announced "still not signed in" — which for an exhausted allowance is a
+    pointless browser window and a false statement."""
+    import argparse
+    from duet import cli
+    from duet.adapters.base import Probe
+
+    binary = fake_bin(tmp_path, "codex", 'echo "Logged in using ChatGPT"')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    from duet.adapters import codex_cli
+    codex_cli.record_usage_limit(USAGE_LIMIT.replace("Oct 18th, 2026", "Oct 18th, 2099"))
+    assert not CodexCliAdapter.probe().ok               # the probe does fail
+
+    def refuse(*a, **k):
+        raise AssertionError("duet login ran a sign-in for an account that is signed in")
+
+    monkeypatch.setattr(cli.subprocess, "call", refuse)
+    monkeypatch.setattr(cli, "cmd_doctor", lambda args: 1)
+
+    args = argparse.Namespace(root=str(tmp_path), agent="chatgpt", force=False)
+    assert cli.cmd_login(args) == 1                     # still not ready, but honest
+    out = capsys.readouterr().out
+    assert "already signed in" in out
+    assert "out of Codex usage quota" in out
+    assert Probe(ok=False, detail="x").signed_in is None   # other backends unchanged
+
+
+def test_duet_login_force_does_not_call_a_quota_problem_a_failed_sign_in(tmp_path, monkeypatch, capsys):
+    """--force runs the sign-in anyway. The probe afterwards still fails on
+    quota, and the old wording then announced "still not signed in" about a
+    sign-in that had just succeeded."""
+    import argparse
+    from duet import cli
+    from duet.adapters import codex_cli
+
+    binary = fake_bin(tmp_path, "codex", 'echo "Logged in using ChatGPT"')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    codex_cli.record_usage_limit(USAGE_LIMIT.replace("Oct 18th, 2026", "Oct 18th, 2099"))
+    monkeypatch.setattr(cli.subprocess, "call", lambda *a, **k: 0)
+    monkeypatch.setattr(cli, "cmd_doctor", lambda args: 1)
+
+    args = argparse.Namespace(root=str(tmp_path), agent="chatgpt", force=True)
+    assert cli.cmd_login(args) == 1                 # doctor still says not ready
+    out = capsys.readouterr().out
+    assert "still not signed in" not in out        # because it is signed in
+    assert "out of Codex usage quota" in out       # this is the real problem
+
+
+def test_a_usage_limit_wins_over_an_earlier_unrelated_error(tmp_path):
+    """duet writes the usage limit down and doctor reports it afterwards, so
+    reporting a different error on screen would leave the user with a mystery
+    error and a quota verdict that nothing they saw accounts for."""
+    agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    agent.bin = fake_bin(tmp_path, "codex", "cat >&2 <<'MSG'\nERROR: stream disconnected before completion\n%s\nMSG\nexit 1\n" % USAGE_LIMIT)
+    reply = agent.send("go")
+
+    assert "usage limit" in reply.error            # not "stream disconnected"
+    assert "claude:opus+claude:sonnet" in reply.error
+    assert note_file().exists()                    # and the two agree
+
+
+def test_a_usage_limit_reaches_the_console_with_its_fix_intact(capsys):
+    """The reporter used to clip errors at 400 characters, which cut the usage
+    limit's advice off mid-sentence and left a stopped session unexplained."""
+    from duet.cli import make_reporter
+    from duet.adapters.codex_cli import explain_usage_limit
+
+    report = make_reporter(["claude", "gpt"])
+    report({"kind": "turn_error", "round": 1, "agent": "gpt",
+            "error": explain_usage_limit(USAGE_LIMIT)})
+    out = capsys.readouterr().out
+
+    assert "usage limit" in out
+    # wrapped output can break between words, so assert on unsplittable tokens
+    assert "11:18" in out                             # when it comes back
+    assert "claude:opus+claude:sonnet" in out         # and what to do meanwhile
+    assert "succeeds" in out                          # the last sentence survives

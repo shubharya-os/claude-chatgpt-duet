@@ -34,6 +34,7 @@ from duet.orchestrator import Orchestrator, STATUS_CONSENSUS, rounds_taken
 from duet.protocol import BLOCKING_SEVERITIES, SEVERITIES, parse_envelope
 
 PREVIEW_CHARS = 700
+ERROR_CHARS = 1200
 
 
 # --------------------------------------------------------------------------
@@ -88,7 +89,13 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
             for note in event.get("notes") or []:
                 say("     " + ui.yellow("note: " + note))
         elif kind == "turn_error":
-            say("  " + ui.red("error: " + str(event.get("error"))[:400]))
+            # Not clipped at 400: the errors worth reading — a usage limit, a
+            # sign-out — carry their fix in the last sentence, and cutting the
+            # fix off is how a stopped session becomes a mystery.
+            error = str(event.get("error") or "")
+            if len(error) > ERROR_CHARS:
+                error = error[:ERROR_CHARS].rstrip() + " …"
+            say("  " + ui.red("error: ") + ui.wrap(error).lstrip())
         elif kind == "patches":
             for line in event.get("log") or []:
                 say("     " + ui.dim("fs: " + line))
@@ -420,7 +427,11 @@ def cmd_login(args: argparse.Namespace) -> int:
     failures = 0
     for name, cls, sub, account in plan:
         probe = cls.probe()
-        if probe.ok and not args.force:
+        # `signed_in` rather than `ok`: an account that is signed in but out of
+        # usage allowance fails the probe, and running `codex login` at it opens
+        # a browser for nothing and then reports "still not signed in", which is
+        # false. doctor at the end of this command reports the real problem.
+        if (probe.signed_in or probe.ok) and not args.force:
             print(ui.green("✓ ") + "%s is already signed in — %s" % (name, probe.detail))
             continue
         binary = cls(name=name, cwd=root).bin
@@ -443,6 +454,14 @@ def cmd_login(args: argparse.Namespace) -> int:
         after = cls.probe()
         if after.ok:
             print(ui.green("✓ ") + "%s signed in — %s" % (name, after.detail))
+        elif after.signed_in:
+            # The sign-in worked; something else is not ready. Saying "still not
+            # signed in" here would be false, and would send the user round the
+            # same browser loop for a problem no login can fix. doctor, which
+            # this command ends with, reports the real one.
+            print(ui.green("✓ ") + "%s signed in — %s" % (name, after.detail))
+            if after.fix:
+                print("    " + ui.yellow("but: ") + after.fix)
         else:
             failures += 1
             print(ui.red("✗ ") + "%s is still not signed in (%s exited %d)" % (name, sub[0], code))
