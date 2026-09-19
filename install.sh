@@ -27,16 +27,33 @@ duet_version() {
 duet_runs() { duet_version "$1" >/dev/null 2>&1; }
 
 # --- python ----------------------------------------------------------------
+# Names on PATH first, then the usual absolute locations. The second list is
+# not belt-and-braces: on this project's own author's Mac, `python3` resolves to
+# a broken x86 binary in /usr/local/bin and the working interpreter lives in
+# /opt/homebrew/bin, which is not on PATH at all. Searching only PATH reported
+# "no Python 3.9+" on a machine with Python 3.12 installed.
 PY=""
-for candidate in python3 python3.13 python3.12 python3.11 python3.10 python3.9 python; do
-  if command -v "$candidate" >/dev/null 2>&1 &&
-     "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
-    PY="$candidate"; break
-  fi
+for candidate in \
+  python3 python3.13 python3.12 python3.11 python3.10 python3.9 python \
+  /opt/homebrew/bin/python3 /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 \
+  /opt/homebrew/bin/python3.11 /usr/local/bin/python3 /usr/bin/python3 \
+  /usr/local/opt/python@3.12/bin/python3.12 /opt/homebrew/opt/python@3.12/bin/python3.12
+do
+  case "$candidate" in
+    /*) [ -x "$candidate" ] || continue ;;
+    *)  command -v "$candidate" >/dev/null 2>&1 || continue ;;
+  esac
+  # It has to actually run: a binary for the wrong architecture is present,
+  # executable, and useless.
+  "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null || continue
+  PY="$candidate"
+  break
 done
-[ -n "$PY" ] || die "duet needs Python 3.9 or newer.
+[ -n "$PY" ] || die "duet needs Python 3.9 or newer, and I could not find one that runs.
+  Checked PATH and the usual locations. If you have one somewhere else, run:
+    <your python> -m pip install --user git+$REPO
   macOS:  brew install python
-  Debian: sudo apt install python3 python3-pip"
+  Debian: sudo apt install python3 python3-pip python3-venv"
 
 # --- install ---------------------------------------------------------------
 # Three ways, in order of how well they behave. Most systems now ship Python as
