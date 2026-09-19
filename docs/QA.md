@@ -319,6 +319,31 @@ without `--upgrade`.
   `install.sh`, clean. `dash -n` passes too. Expected and observed now agree, which was
   the whole of the distinction being drawn.
 
+## The API backend, run for the first time
+
+`openai-api` is the fallback for anyone without a ChatGPT subscription, and every
+test of it replaced `_request` — so urllib, the URL construction, the Authorization
+header and the JSON handling had never actually executed. A documented path nobody
+had run.
+
+A local HTTP server now stands in for the API, so the real request path runs against
+a real socket, and the shape of what duet sends is asserted from the receiving end —
+the half a monkeypatched `_request` cannot check. It also covers the `patches`
+builder, which is how an agent with no tools of its own writes files; until now that
+was only exercised by the mock adapter, which never goes near a network.
+
+Run live first: a full session, ChatGPT-via-API leading and real Claude Code
+reviewing. The API side built `greet.py` entirely through `patches`, and Claude found
+two genuine faults in it — `greet(123)` leaking an `AttributeError` about `.strip`,
+and `greet(None)` raising "name must not be empty", which it called a wrong diagnosis
+rather than a wrong outcome: None is the wrong type, and it only passed because
+`not None` is incidentally true. Both sides then signed off on the corrected file.
+
+One trap worth recording, since it is not duet's: the first version of the test took
+35 seconds, all of it inside `HTTPServer.server_bind`, which resolves the host's FQDN.
+On a machine with slow reverse DNS that blocks for tens of seconds. Binding without
+the lookup took it to 1 second. A useful test that is slow is a test people skip.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,
