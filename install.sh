@@ -170,14 +170,23 @@ fi
 if [ -t 0 ]; then
   $DUET setup
 else
-  # No terminal at all: a CI job, or a shell with no controlling tty. Nothing
-  # can be asked, so say what is left rather than guessing at consent.
-  say "Installed. One command left, in a terminal it can ask questions in:"
+  # No terminal at all: a CI job, or a shell with no controlling tty. Installing
+  # /duet needs no consent — it writes into the caller's own Claude and Codex
+  # config directories, which is what running this asked for — so do that part
+  # now and leave only what genuinely needs a human: a global npm install, and
+  # two browser sign-ins that cannot be automated at all.
+  if $DUET skill install >/dev/null 2>&1; then
+    say "Installed. /duet is in place for Claude Code and Codex."
+  else
+    say "Installed."
+  fi
+  say ""
+  say "What is left needs a terminal it can ask questions in:"
   say ""
   say "    \"$DUET\" setup"
   say ""
-  say "It installs the two agent CLIs if missing, signs you in to both (no API"
-  say "keys — your Claude and ChatGPT plans), and adds /duet to Claude Code."
+  say "It installs the two agent CLIs if they are missing and signs you in to"
+  say "both — no API keys, your Claude and ChatGPT plans."
   say ""
   say "Non-interactive? \`\"$DUET\" setup --yes\` installs without asking first."
 fi

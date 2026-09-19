@@ -300,3 +300,35 @@ def test_a_second_run_repairs_a_half_installed_venv(tmp_path, shell):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert (home / ".duet" / "venv" / "bin" / "duet").is_file()
     assert "Installed." in proc.stdout
+
+
+# A stub that records what it was asked to do, so the installer's own calls can
+# be asserted rather than inferred from side effects it cannot produce here.
+RECORDING_DUET = (
+    "#!/bin/sh\n"
+    "if [ \"$1\" = \"--version\" ]; then echo 'duet 0.1.0'; exit 0; fi\n"
+    "echo \"$@\" >> \"$DUET_CALLS\"\n"
+    "exit 0\n"
+)
+
+
+def test_a_run_with_no_terminal_still_puts_duet_in_place(tmp_path, shell):
+    """A CI box has no controlling tty, so nothing can be asked. Installing
+    /duet needs no consent though — it writes into the caller's own Claude and
+    Codex config directories, which is what running the installer asked for.
+    Only the global npm install and two browser sign-ins need a human, and
+    neither can be automated anyway."""
+    home, env = _sandbox(tmp_path, RECORDING_DUET)
+    calls = tmp_path / "calls.txt"
+    env["DUET_CALLS"] = str(calls)
+
+    proc = _run(env, shell)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    asked = calls.read_text() if calls.is_file() else ""
+    assert "skill install" in asked, "installer did not place /duet: %r" % asked
+    assert "setup" not in asked, "setup needs consent and must not run unasked"
+
+    # and it says what is left rather than implying it finished
+    assert "needs a terminal" in proc.stdout
+    assert "setup" in proc.stdout
