@@ -420,3 +420,19 @@ def test_a_duet_on_path_is_used_as_is(tmp_path, monkeypatch):
     text = (tmp_path / ".claude" / "commands" / "duet.md").read_text()
     assert "/usr/local/bin/duet run" in text
     assert "-m duet" not in text
+
+
+def test_the_command_pre_authorises_the_invocation_it_actually_uses(tmp_path, monkeypatch):
+    """Baking an absolute path in broke the permission rule that was written for
+    a bare `duet`, so Bash was blocked and the session could not run it at all.
+    The allow rule has to name the same invocation the body calls."""
+    from duet.cli import main
+
+    monkeypatch.setattr("duet.cli.shutil.which", lambda name: None)
+    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
+    text = (tmp_path / ".claude" / "commands" / "duet.md").read_text()
+
+    header = text.split("---")[1]
+    invocation = next(line.split("```bash")[0] for line in text.splitlines()
+                      if "-m duet run" in line).split(" run")[0].strip()
+    assert "Bash(%s:*)" % invocation in header, header
