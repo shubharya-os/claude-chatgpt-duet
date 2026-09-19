@@ -74,7 +74,7 @@ if command -v pipx >/dev/null 2>&1; then
 fi
 
 if [ -z "$DUET" ]; then
-  if "$PY" -m pip install --user --quiet --upgrade "git+$REPO" >/dev/null 2>&1; then
+  if "$PY" -m pip install --user --quiet --upgrade --force-reinstall --no-deps "git+$REPO" >/dev/null 2>&1; then
     USER_BIN="$("$PY" -m site --user-base 2>/dev/null)/bin"
     for candidate in "$USER_BIN/duet" "$(command -v duet 2>/dev/null || true)"; do
       if duet_runs "$candidate"; then DUET="$candidate"; break; fi
@@ -88,11 +88,13 @@ if [ -z "$DUET" ]; then
   "$PY" -m venv "$VENV" || die "could not create a virtualenv at $VENV.
   On Debian/Ubuntu: sudo apt install python3-venv"
   "$VENV/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
-  # --upgrade, like the --user branch above. Without it, a second run over a
-  # venv whose first install died half way gets "Requirement already
-  # satisfied", pip does nothing, the console script is still missing, and the
-  # rerun that was meant to repair the install cannot.
-  "$VENV/bin/python" -m pip install --quiet --upgrade "git+$REPO" ||
+  # --force-reinstall, not just --upgrade. A git source carries whatever version
+  # the project declares, so pip compares 0.2.0 against 0.2.0, says "already
+  # satisfied" and does nothing - re-running the installer to pick up fixes
+  # silently keeps the old code. Found by upgrading an install that then still
+  # had a blocker fixed hours earlier. It also repairs a first install that
+  # died half way, which --upgrade alone would not.
+  "$VENV/bin/python" -m pip install --quiet --upgrade --force-reinstall --no-deps "git+$REPO" ||
     die "could not install duet from $REPO"
   DUET="$VENV/bin/duet"
 fi
