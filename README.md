@@ -115,7 +115,9 @@ duet run "add retry with backoff to src/fetch.py, and a test that proves it" \
   --gate "pytest -q"
 ```
 
-The `--gate` is the important part. It is your real test command, run by the harness
+**duet finds your test command itself** and prints what it picked, so the flag people
+most often forget is not required. Pass `--gate` to override it, `--no-gate` to run
+without. It is the important part: your real test command, run by the harness
 after every turn. Neither agent may finish while it fails, and neither is ever *asked*
 whether it passed — they are both shown the actual output. Without it, the two of them
 can only agree by argument.

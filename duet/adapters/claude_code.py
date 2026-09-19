@@ -15,7 +15,14 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from duet.adapters.base import RUNTIME_FIX, Adapter, AgentReply, Probe, looks_unrunnable
+from duet.adapters.base import (
+    RUNTIME_FIX,
+    Adapter,
+    AgentReply,
+    Probe,
+    env_with_sibling_path,
+    looks_unrunnable,
+)
 
 DEFAULT_CANDIDATES = (
     os.environ.get("DUET_CLAUDE_BIN", ""),
@@ -38,13 +45,18 @@ def read_auth_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], st
     the binary exists, and that false green is exactly what sends someone into a
     session that fails on its first turn.
     """
-    try:
-        proc = subprocess.run(
-            [binary, "auth", "status"], capture_output=True, text=True, timeout=timeout
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return None, str(exc)
-    out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    out = ""
+    for env in (None, env_with_sibling_path(binary)):
+        try:
+            proc = subprocess.run(
+                [binary, "auth", "status"], capture_output=True, text=True,
+                timeout=timeout, env=env,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return None, str(exc)
+        out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        if not looks_unrunnable(out):
+            break
     broken = looks_unrunnable(out)
     if broken:
         return None, "could not run claude: %s" % broken
@@ -147,6 +159,7 @@ class ClaudeCodeAdapter(Adapter):
                 # the prompt is passed with -p; an inherited stdin pipe would
                 # only give the CLI something else to wait on
                 stdin=subprocess.DEVNULL,
+                env=env_with_sibling_path(self.bin),
             )
         except FileNotFoundError:
             return AgentReply(

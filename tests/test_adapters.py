@@ -543,3 +543,51 @@ def test_every_unrunnable_signature_is_recognised(noise):
     assert looks_unrunnable(noise)
     assert not looks_unrunnable("Logged in using ChatGPT")
     assert not looks_unrunnable('{"loggedIn": true}')
+
+
+def test_a_broken_interpreter_on_path_is_worked_around(tmp_path, monkeypatch):
+    """A `node` earlier on PATH than the working one broke both CLIs on a real
+    machine. The CLI's own directory almost certainly holds the toolchain it was
+    installed with, so trying that is worth one retry before giving up."""
+    bin_dir = tmp_path / "good"
+    bin_dir.mkdir()
+    # Only runs when its own directory is first on PATH; otherwise it fails the
+    # way a shadowed interpreter does.
+    binary = fake_bin(bin_dir, "codex", r'''
+first="${PATH%%:*}"
+if [ "$first" = "$(dirname "$0")" ]; then
+  echo "Logged in using ChatGPT"
+else
+  echo "env: node: Bad CPU type in executable" >&2
+  exit 126
+fi
+''')
+    # A PATH that can still run a shell, but does not contain the CLI's own
+    # directory — which is the shape of the real breakage.
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    probe = CodexCliAdapter.probe()
+    assert probe.ok, probe.detail
+    assert "ChatGPT" in probe.detail
+
+
+def test_the_repaired_path_puts_the_cli_directory_first(tmp_path):
+    from duet.adapters.base import env_with_sibling_path
+
+    binary = str(tmp_path / "bin" / "claude")
+    env = env_with_sibling_path(binary, {"PATH": "/usr/local/bin:/usr/bin"})
+    assert env["PATH"].split(":")[0] == str(tmp_path / "bin")
+    assert "/usr/bin" in env["PATH"]           # the rest is kept
+
+    # already first: left alone rather than duplicated
+    again = env_with_sibling_path(binary, env)
+    assert again["PATH"] == env["PATH"]
+
+
+def test_a_genuinely_broken_cli_still_reports_honestly(tmp_path, monkeypatch):
+    """The retry must not turn a real failure into a false green."""
+    binary = fake_bin(tmp_path, "codex", 'echo "env: node: Bad CPU type in executable" >&2; exit 126')
+    monkeypatch.setattr("duet.adapters.codex_cli.Adapter.which", staticmethod(lambda *a: binary))
+    probe = CodexCliAdapter.probe()
+    assert not probe.ok
+    assert "could not run" in probe.detail

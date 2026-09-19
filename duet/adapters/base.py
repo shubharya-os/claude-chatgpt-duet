@@ -47,6 +47,24 @@ def looks_unrunnable(output: str) -> str:
     return ""
 
 
+def env_with_sibling_path(binary: str, env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """A copy of the environment with the CLI's own directory first on PATH.
+
+    When `claude` lives in /opt/homebrew/bin, the `node` it was installed with
+    is almost certainly there too — and the reason it failed to start is some
+    other, broken `node` earlier on PATH. Putting the CLI's own directory first
+    uses the toolchain it shipped beside, which is what a working install would
+    have done anyway.
+    """
+    env = dict(env if env is not None else os.environ)
+    directory = os.path.dirname(os.path.abspath(binary))
+    if directory:
+        current = env.get("PATH", "")
+        if current.split(os.pathsep)[:1] != [directory]:
+            env["PATH"] = directory + (os.pathsep + current if current else "")
+    return env
+
+
 RUNTIME_FIX = (
     "that CLI could not start at all, so its sign-in state is unknown. It is "
     "usually a broken `node` earlier on PATH than the working one — check "

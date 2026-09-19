@@ -14,7 +14,7 @@ start a new session.
 
 ## If the argument is `review`
 
-Run `duet review --reviewer claude --gate "<the project's test command>"` to get Claude
+Run `duet review --reviewer claude` to get Claude
 Code's opinion on the current diff. Report the findings and say which you agree with.
 You may disagree — say so and why.
 
@@ -28,13 +28,14 @@ what you already tried and what happened, and which files matter. Short and spec
 this goes to two engineers who cannot see this conversation. Omit anything you are unsure
 of.
 
-**2. Find the gate** — the project's real test or build command. It is the flag that
-matters most; without it "done" is just two models agreeing.
+**2. The gate** — duet finds the project's test command itself and says what it picked.
+Pass `--gate` only to override it. If it found none, say so: "done" is then just two
+models agreeing.
 
 **3. Run it:**
 
 ```bash
-duet run "$ARGUMENTS" --context-file /tmp/duet-context.md --gate "<the gate>" --pair codex+claude
+duet run "$ARGUMENTS" --context-file /tmp/duet-context.md --pair codex+claude
 ```
 
 `--pair codex+claude` puts you (ChatGPT) in the lead and Claude Code as reviewer, which

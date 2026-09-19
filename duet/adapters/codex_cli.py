@@ -13,7 +13,14 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from duet.adapters.base import RUNTIME_FIX, Adapter, AgentReply, Probe, looks_unrunnable
+from duet.adapters.base import (
+    RUNTIME_FIX,
+    Adapter,
+    AgentReply,
+    Probe,
+    env_with_sibling_path,
+    looks_unrunnable,
+)
 
 DEFAULT_CANDIDATES = (
     os.environ.get("DUET_CODEX_BIN", ""),
@@ -55,13 +62,20 @@ def explain_failure(output: str) -> str:
 
 def read_login_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], str]:
     """(logged_in, human description). None means it could not be determined."""
-    try:
-        proc = subprocess.run(
-            [binary, "login", "status"], capture_output=True, text=True, timeout=timeout
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return None, str(exc)
-    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    out = ""
+    for env in (None, env_with_sibling_path(binary)):
+        try:
+            proc = subprocess.run(
+                [binary, "login", "status"], capture_output=True, text=True,
+                timeout=timeout, env=env,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return None, str(exc)
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        # A broken interpreter earlier on PATH is worth one retry with the
+        # CLI's own directory first; anything else is a real answer.
+        if not looks_unrunnable(out):
+            break
     broken = looks_unrunnable(out)
     if broken:
         return None, "could not run codex: %s" % broken
@@ -140,6 +154,7 @@ class CodexCliAdapter(Adapter):
                         # inherited pipe makes it block forever waiting for EOF.
                         # duet is almost never run from a tty, so close it.
                         stdin=subprocess.DEVNULL,
+                        env=env_with_sibling_path(self.bin),
                     )
                 except FileNotFoundError:
                     return AgentReply(

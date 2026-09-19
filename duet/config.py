@@ -106,6 +106,7 @@ class Config:
     start: str = ""
     decider: str = ""
     gate: str = ""
+    gate_was_detected: bool = False
     gate_timeout: int = 900
     max_rounds: int = 12
     max_debate: int = 3

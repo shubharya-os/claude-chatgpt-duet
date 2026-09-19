@@ -14,7 +14,7 @@ Nothing else. Do not start a new session.
 
 ## If the argument is `review`
 
-Run `duet review --gate "<the project's test command>"`. Report the findings and say
+Run `duet review`. Report the findings and say
 which ones you agree with. You are allowed to disagree with the reviewer — say so and
 why. Do not silently act on a finding you think is wrong.
 
@@ -37,15 +37,15 @@ Be specific and short. This is a handoff note to two engineers who cannot see yo
 screen, not a summary for the user. Leave out anything you are unsure of — a confident
 wrong note is worse than a missing one.
 
-**2. Find the gate.** The single most important flag. Look for the project's real test
-or build command — `pytest -q`, `npm test`, `cargo test`, a Makefile target, whatever CI
-runs. If you genuinely cannot find one, say so in your reply and run without it, but
-mention that "done" is then only the two of them agreeing.
+**2. The gate.** duet finds the project's test command itself and prints what it picked.
+Only pass `--gate` when it would pick wrong, or when there is something better than the
+obvious one — a subset that runs fast, or a lint step worth including. If it reports
+finding none, say so in your reply: "done" is then only the two of them agreeing.
 
 **3. Run it:**
 
 ```bash
-duet run "$ARGUMENTS" --context-file /tmp/duet-context.md --gate "<the gate>"
+duet run "$ARGUMENTS" --context-file /tmp/duet-context.md
 ```
 
 Add `--pair codex+claude` if the user wants ChatGPT to lead. It streams; let it. If it

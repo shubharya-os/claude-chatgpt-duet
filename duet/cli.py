@@ -15,6 +15,7 @@ from duet import __version__, prompts, ui
 from duet.adapters import REGISTRY
 from duet.adapters import build as build_adapter
 from duet.adapters.base import Adapter
+from duet import gate as gate_detect
 from duet.config import (
     BACKEND_ALIASES,
     DEFAULT_PAIR,
@@ -55,7 +56,11 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
                 say("  %s  %s" % (ui.agent_tag(name, agents), ui.dim(desc)))
             say("  %s %s" % (ui.dim("workspace:"), event.get("root")))
             if event.get("gate"):
-                say("  %s %s" % (ui.dim("gate:     "), event["gate"]))
+                note = ui.dim("  (found for you — override with --gate)") if event.get("gate_was_detected") else ""
+                say("  %s %s%s" % (ui.dim("gate:     "), event["gate"], note))
+            else:
+                say("  %s %s" % (ui.dim("gate:     "),
+                                 ui.yellow("none — they can only agree by argument")))
             say("  %s %s goes first, up to %d rounds"
                   % (ui.dim("order:    "), (event.get("order") or ["?"])[0], event.get("max_rounds", 0)))
             say(ui.rule())
@@ -174,6 +179,15 @@ def build_config(args: argparse.Namespace) -> Config:
     # flags it actually offers.
     if getattr(args, "gate", None) is not None:
         cfg.gate = args.gate
+    elif not cfg.gate and not getattr(args, "no_gate", False):
+        # The flag people forget is the one that keeps "done" honest, so look
+        # for it rather than letting a session run on argument alone. What was
+        # picked is printed, because a gate you did not choose running the
+        # wrong command looks like verification and is not.
+        found = gate_detect.detect(cfg.root)
+        if found:
+            cfg.gate = found
+            cfg.gate_was_detected = True
     if getattr(args, "rounds", None) is not None:
         cfg.max_rounds = args.rounds
     if getattr(args, "max_debate", None) is not None:
@@ -331,6 +345,14 @@ def cmd_init(args: argparse.Namespace) -> int:
                 spec.backend = args.gpt_backend
     if args.gate is not None:
         cfg.gate = args.gate
+    elif not cfg.gate and not getattr(args, "no_gate", False):
+        # The flag people forget is the one that keeps "done" honest, so look
+        # for it — and say what was picked, since a gate you did not choose
+        # running the wrong command is worse than none.
+        found = gate_detect.detect(root)
+        if found:
+            cfg.gate = found
+            cfg.gate_was_detected = True
     if args.rounds is not None:
         cfg.max_rounds = args.rounds
 
@@ -1546,7 +1568,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--context-file", metavar="PATH", help="read that context from a file, or - for stdin")
     p_run.add_argument("--accept", help="acceptance criteria, in prose")
     p_run.add_argument("--accept-file", help="read acceptance criteria from a file")
-    p_run.add_argument("--gate", help="command that must pass before either agent may finish, e.g. \"pytest -q\"")
+    p_run.add_argument("--gate", help="command that must pass before either agent may finish, "
+                                      "e.g. \"pytest -q\" (auto-detected when you omit it)")
+    p_run.add_argument("--no-gate", action="store_true",
+                       help="run without a gate — the two of them can then only agree by argument")
     p_run.add_argument("--rounds", type=int, help="maximum rounds (default 12)")
     p_run.add_argument("--max-debate", type=int, help="rounds an issue may stay open before arbitration (default 3)")
     p_run.add_argument(
