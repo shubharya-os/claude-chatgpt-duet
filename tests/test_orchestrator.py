@@ -411,15 +411,43 @@ def test_the_installed_files_call_duet_by_a_path_that_resolves(tmp_path, monkeyp
         assert "-m duet" in text, relative          # falls back to the module form
 
 
-def test_a_duet_on_path_is_used_as_is(tmp_path, monkeypatch):
-    from duet.cli import main
+def test_a_working_duet_on_path_is_used_as_is(tmp_path, monkeypatch):
+    """Preferred when it exists — but only after it has been run, which is why
+    a path that merely looks right is not enough."""
+    import os
+    import stat
+
+    fake = tmp_path / "duet"
+    fake.write_text("#!/usr/bin/env bash\necho 'duet 0.1.0'\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
     monkeypatch.setattr("duet.cli.shutil.which",
-                        lambda name: "/usr/local/bin/duet" if name == "duet" else None)
-    assert main(["skill", "install", "--dir", str(tmp_path)]) == 0
-    text = (tmp_path / ".claude" / "commands" / "duet.md").read_text()
-    assert "/usr/local/bin/duet run" in text
+                        lambda name: str(fake) if name == "duet" else None)
+    home = tmp_path / "home"
+    assert main_install(home) == 0
+    text = (home / ".claude" / "commands" / "duet.md").read_text()
+    assert "%s run" % fake in text
     assert "-m duet" not in text
+
+
+def test_a_duet_on_path_that_does_not_run_is_not_trusted(tmp_path, monkeypatch):
+    import stat
+
+    broken = tmp_path / "duet"
+    broken.write_text("#!/usr/bin/env bash\necho 'command not found' >&2\nexit 127\n")
+    broken.chmod(broken.stat().st_mode | stat.S_IEXEC)
+
+    monkeypatch.setattr("duet.cli.shutil.which",
+                        lambda name: str(broken) if name == "duet" else None)
+    from duet.cli import duet_invocation
+
+    assert duet_invocation() != str(broken)
+
+
+def main_install(home):
+    from duet.cli import main
+
+    return main(["skill", "install", "--dir", str(home)])
 
 
 def test_the_command_pre_authorises_the_invocation_it_actually_uses(tmp_path, monkeypatch):
@@ -436,3 +464,35 @@ def test_the_command_pre_authorises_the_invocation_it_actually_uses(tmp_path, mo
     invocation = next(line.split("```bash")[0] for line in text.splitlines()
                       if "-m duet run" in line).split(" run")[0].strip()
     assert "Bash(%s:*)" % invocation in header, header
+
+
+def test_the_installed_invocation_is_one_that_has_been_run(tmp_path, monkeypatch):
+    """Two attempts at this shipped an invocation that had never been executed:
+    a bare `duet` that was not on the spawned session's PATH, then
+    `<python> -m duet`, which only worked from the directory duet was being run
+    out of. Each candidate is now executed from elsewhere before it is written."""
+    import subprocess as sp
+
+    from duet.cli import duet_invocation
+
+    attempted = []
+    real_run = sp.run
+
+    def watching(cmd, *a, **kw):
+        if isinstance(cmd, str) and "--version" in cmd:
+            attempted.append(cmd)
+        return real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr("duet.cli.subprocess.run", watching)
+    monkeypatch.setattr("duet.cli.shutil.which", lambda name: None)
+
+    invocation = duet_invocation()
+    assert attempted, "no candidate was executed before being chosen"
+    assert invocation + " --version" in attempted
+
+    # and the one it settled on genuinely runs, from a directory that is not
+    # the package's own
+    proc = real_run(invocation + " --version", shell=True, capture_output=True,
+                    text=True, cwd=str(tmp_path), timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert "duet" in proc.stdout.lower()

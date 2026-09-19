@@ -481,20 +481,45 @@ SKILL_TARGETS = [
 ]
 
 
-def duet_invocation() -> str:
-    """How to run duet from wherever it actually lives.
+def _invocation_works(command: str) -> bool:
+    """Run it. An invocation nobody has executed is a guess."""
+    try:
+        proc = subprocess.run(
+            "%s --version" % command,
+            shell=True, capture_output=True, text=True, timeout=60,
+            cwd=tempfile.gettempdir(),      # anywhere but here, like the caller
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0 and "duet" in (proc.stdout or "").lower()
 
-    A spawned Claude Code or Codex session inherits whatever PATH it is given,
-    and duet is usually inside a venv or ~/.local/bin that is not on it. Writing
-    a bare `duet` into the skill files produced exactly that failure: the
-    assistant looked, could not find it, and correctly refused to review the
-    change itself instead. So the absolute path is baked in at install time.
+
+def duet_invocation() -> str:
+    """How to run duet from a session that is not this one.
+
+    A spawned Claude Code or Codex session inherits neither this PATH nor this
+    working directory. Both previous attempts at this failed in exactly that
+    gap: a bare `duet` was not on the session's PATH, and `<python> -m duet`
+    only worked from the directory duet was being run out of.
+
+    So each candidate is executed, from somewhere else, before it is written
+    into a file that something else will have to run.
     """
+    candidates = []
     found = shutil.which("duet")
     if found:
-        return found
-    # Installed as a module without its entry point on PATH.
-    return "%s -m duet" % sys.executable
+        candidates.append(found)
+    candidates.append("%s -m duet" % sys.executable)
+    # Importable only because of where it happens to live: say so explicitly
+    # rather than relying on the caller's working directory.
+    package_root = Path(__file__).resolve().parent.parent
+    candidates.append("PYTHONPATH=%s %s -m duet" % (package_root, sys.executable))
+
+    for candidate in candidates:
+        if _invocation_works(candidate):
+            return candidate
+    # Nothing ran. Emit the most explicit form so the failure names a real path.
+    return candidates[-1]
 
 
 def cmd_skill(args: argparse.Namespace) -> int:
