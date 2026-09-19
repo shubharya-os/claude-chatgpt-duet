@@ -129,8 +129,13 @@ def detect(root: str) -> Optional[str]:
         if not (base / marker).is_file():
             continue
         if marker == "Makefile":
+            # `usable` too: a `test:` target is no use on a machine without
+            # make, and this branch returned early, skipping the one check that
+            # exists to stop an unstartable gate from vetoing every round.
             if _make_has_test_target(base):
-                return command
+                found = usable(command)
+                if found:
+                    return found
             continue
         if command.startswith("pytest") and not _has_python_tests(base):
             continue

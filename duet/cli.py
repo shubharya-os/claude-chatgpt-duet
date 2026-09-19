@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -532,8 +534,30 @@ def _invocation_works(command: str) -> bool:
     return proc.returncode == 0 and "duet" in (proc.stdout or "").lower()
 
 
-def duet_invocation() -> str:
-    """How to run duet from a session that is not this one.
+def _candidate_invocations() -> List[str]:
+    """Ways to run duet, best first. Every one is a shell command line.
+
+    Each path is quoted: on a machine whose home directory has a space in it
+    — `/Users/Ada Lovelace/...`, which is ordinary on macOS — an unquoted
+    `PYTHONPATH=/Users/Ada Lovelace/x python -m duet` runs `Lovelace/x` as a
+    command and dies with "et: command not found".
+    """
+    candidates = []
+    found = shutil.which("duet")
+    if found:
+        candidates.append(shlex.quote(found))
+    candidates.append("%s -m duet" % shlex.quote(sys.executable))
+    # Importable only because of where it happens to live: say so explicitly
+    # rather than relying on the caller's working directory.
+    package_root = Path(__file__).resolve().parent.parent
+    candidates.append("PYTHONPATH=%s %s -m duet"
+                      % (shlex.quote(str(package_root)), shlex.quote(sys.executable)))
+    return candidates
+
+
+def duet_invocation_checked() -> Tuple[str, bool]:
+    """How to run duet from a session that is not this one, and whether that is
+    known to work rather than hoped.
 
     A spawned Claude Code or Codex session inherits neither this PATH nor this
     working directory. Both previous attempts at this failed in exactly that
@@ -541,29 +565,52 @@ def duet_invocation() -> str:
     only worked from the directory duet was being run out of.
 
     So each candidate is executed, from somewhere else, before it is written
-    into a file that something else will have to run.
+    into a file that something else will have to run. If none of them runs, the
+    caller has to say so: writing the files and printing a tick is a claim that
+    `/duet` works, and at that point nothing has shown that it does.
     """
-    candidates = []
-    found = shutil.which("duet")
-    if found:
-        candidates.append(found)
-    candidates.append("%s -m duet" % sys.executable)
-    # Importable only because of where it happens to live: say so explicitly
-    # rather than relying on the caller's working directory.
-    package_root = Path(__file__).resolve().parent.parent
-    candidates.append("PYTHONPATH=%s %s -m duet" % (package_root, sys.executable))
-
+    candidates = _candidate_invocations()
     for candidate in candidates:
         if _invocation_works(candidate):
-            return candidate
+            return candidate, True
     # Nothing ran. Emit the most explicit form so the failure names a real path.
-    return candidates[-1]
+    return candidates[-1], False
+
+
+def duet_invocation() -> str:
+    return duet_invocation_checked()[0]
+
+
+def _is_stale_duet_file(current: str, template: str) -> bool:
+    """Did duet write this file itself, with a different invocation baked in?
+
+    `{{DUET}}` is the only thing that varies between the packaged template and
+    what lands on disk, so a file matching the template everywhere else is ours
+    and merely out of date. That happens on any second install where duet has
+    moved — a `pip --user` install later replaced by a virtualenv, or a machine
+    where `duet` has since reached PATH — and refusing it as "a different
+    version is already there" sent an ordinary re-run of `duet setup` to a
+    `--force` it should never have needed, and failed the whole command if the
+    user did not know to pass it.
+
+    A file someone has actually edited still will not match, so it is still
+    protected.
+    """
+    parts = template.split("{{DUET}}")
+    if len(parts) == 1:
+        return False
+    pattern = "(.+?)".join(re.escape(part) for part in parts)
+    match = re.fullmatch(pattern, current, re.DOTALL)
+    if match is None:
+        return False
+    # The same invocation everywhere, or it is not a clean render of ours.
+    return len(set(match.groups())) == 1
 
 
 def cmd_skill(args: argparse.Namespace) -> int:
     """Install `/duet` into Claude Code and Codex, plus the Claude Code skill."""
     source_dir = skill_dir()
-    invocation = duet_invocation()
+    invocation, invocation_verified = duet_invocation_checked()
     home = Path(args.dir).expanduser() if args.dir else Path.home()
 
     if args.action == "path":
@@ -582,13 +629,14 @@ def cmd_skill(args: argparse.Namespace) -> int:
         if not source.is_file():
             failed.append((label, target, "packaged file missing: %s" % source))
             continue
-        body = source.read_text(encoding="utf-8").replace("{{DUET}}", invocation)
+        template = source.read_text(encoding="utf-8")
+        body = template.replace("{{DUET}}", invocation)
         if target.is_file():
             current = target.read_text(encoding="utf-8", errors="replace")
             if current == body:
                 skipped.append((label, target, "already up to date"))
                 continue
-            if not args.force:
+            if not args.force and not _is_stale_duet_file(current, template):
                 failed.append((label, target, "a different version is already there"))
                 continue
         try:
@@ -611,6 +659,22 @@ def cmd_skill(args: argparse.Namespace) -> int:
         if any("already there" in note for _, _, note in failed):
             print()
             print(ui.dim("overwrite them with: ") + ui.bold("duet skill install --force"))
+        return 1
+
+    if not invocation_verified:
+        # The files are in the right places, so they stay — but every way of
+        # running duet from somewhere that is not this process failed, and the
+        # next thing printed used to be "In a new Claude Code session: /duet ...".
+        # That is the project's own failure class: a tick nothing has earned.
+        bindir = Path(sys.executable).resolve().parent
+        print()
+        print(ui.red("✗ ") + "the files are written, but /duet will not work yet.")
+        print("  They have to call duet as " + ui.bold(invocation) + ",")
+        print("  and that command does not answer " + ui.bold("--version") + " from another")
+        print("  directory — so a Claude Code or Codex session could not run it either.")
+        print("  " + ui.yellow("fix: ") + "put duet on your PATH and install again:")
+        print("    " + ui.bold('export PATH="%s:$PATH"' % bindir))
+        print("    " + ui.bold("duet skill install --force"))
         return 1
 
     if installed:
@@ -642,6 +706,24 @@ AGENT_PACKAGES = {
 
 def _missing_agent_clis() -> List[str]:
     return [name for name in ("claude", "codex") if not Adapter.which(name)]
+
+
+def _npm_global_bin() -> Optional[str]:
+    """Where `npm install -g` puts commands, if npm will say.
+
+    `npm bin -g` was removed in npm 9, so fall back to `npm prefix -g`, which
+    has been there throughout and prints the directory whose `bin` holds them.
+    """
+    for argv, suffix in ((["npm", "bin", "-g"], None), (["npm", "prefix", "-g"], "bin")):
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        out = (proc.stdout or "").strip()
+        if proc.returncode == 0 and out:
+            path = out.splitlines()[-1].strip()
+            return str(Path(path) / suffix) if suffix else path
+    return None
 
 
 def _ask(question: str, assume_yes: bool) -> bool:
@@ -693,7 +775,25 @@ def cmd_setup(args: argparse.Namespace) -> int:
             print(ui.yellow("   skipped") + " — run that yourself, then `duet setup` again.")
             return 1
         code = subprocess.call(command, shell=True)
-        if code != 0 or _missing_agent_clis():
+        still_missing = _missing_agent_clis()
+        if code == 0 and still_missing:
+            # npm said it worked, and it almost certainly did — into a directory
+            # that is not on this PATH. "Run it yourself and re-run setup" is
+            # the wrong instruction for that: running it again lands in exactly
+            # the same place. Name the directory instead.
+            print(ui.red("   ✗ ") + "npm reported success, but %s is still not on your PATH."
+                  % " or ".join(still_missing))
+            npm_bin = _npm_global_bin()
+            if npm_bin:
+                print("     npm installs global commands into " + ui.bold(npm_bin) + ".")
+                print("     Add it to your shell profile:")
+                print("       " + ui.bold('export PATH="%s:$PATH"' % npm_bin))
+            else:
+                print("     Run " + ui.bold("npm prefix -g") + " to find where it put them, and add")
+                print("     that directory's " + ui.bold("bin") + " to your PATH.")
+            print("     Then run " + ui.bold("duet setup") + " again.")
+            return 1
+        if code != 0 or still_missing:
             print(ui.red("   ✗ ") + "that did not finish cleanly. Run it yourself and re-run setup.")
             return 1
         print(ui.green("   ✓ ") + "installed")
