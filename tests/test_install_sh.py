@@ -24,10 +24,23 @@ SHELLS = ["sh", "dash", "posh", "ksh", "bash", "zsh", "busybox"]
 
 
 def _available():
+    """Shells that are present *and* can actually run.
+
+    A binary for the wrong architecture is on PATH, executable, and useless —
+    this machine has an x86 /usr/local/bin/zsh that raises OSError on exec. The
+    same 'present but unusable' shape this project keeps finding in the wild,
+    so the discovery here has to run the thing rather than trust which().
+    """
     found = []
     for name in SHELLS:
         path = shutil.which(name)
-        if path:
+        if not path:
+            continue
+        try:
+            proc = subprocess.run([path, '-c', 'exit 0'], capture_output=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode == 0:
             found.append((name, path))
     return found
 

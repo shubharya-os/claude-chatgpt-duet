@@ -546,3 +546,21 @@ def test_setup_stops_when_a_side_is_genuinely_signed_out(tmp_path, monkeypatch, 
 
     assert main(["setup", "-C", str(tmp_path), "--yes"]) == 1
     assert "codex login" in capsys.readouterr().out
+
+
+def test_session_records_whether_context_crossed(tmp_path):
+    """Whether the handoff arrived is a claim duet makes, so it belongs in the
+    record rather than in the caller's account of it."""
+    import json
+    cfg = Config(task="t", context="ruled out: requests", root=str(tmp_path),
+                 max_rounds=2,
+                 agents=[AgentSpec("a", "mock"), AgentSpec("b", "mock")])
+    ads = {n: MockAdapter(name=n, cwd=str(tmp_path), config={"script": [DONE]})
+           for n in ("a", "b")}
+    orch = Orchestrator(cfg, adapters=ads)
+    orch.run()
+    events = [json.loads(l) for l in
+              (Path(orch.session_dir) / "events.jsonl").read_text().splitlines()]
+    start = next(e for e in events if e["kind"] == "session_start")
+    assert start["context_chars"] == len("ruled out: requests")
+    assert "ruled out" not in json.dumps(start)

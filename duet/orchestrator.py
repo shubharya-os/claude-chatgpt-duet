@@ -423,6 +423,10 @@ class Orchestrator:
             agents={a.name: self.adapters[a.name].describe() for a in cfg.agents},
             order=order,
             gate=cfg.gate,
+            # Records that a handoff note arrived, and its size, without
+            # copying it into the log. Whether context crossed is a claim
+            # duet makes, so it should be checkable from the record.
+            context_chars=len((cfg.context or "").strip()),
             max_rounds=cfg.max_rounds,
             resumed_from=self.resumed_from or None,
             start_round=self.start_round,
