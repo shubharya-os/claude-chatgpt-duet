@@ -182,11 +182,49 @@ Recorded because they are the same class of error the tool is built to catch.
 - **`git checkout` discarded the agents' work mid-merge.** The `state()`/`restore()`
   methods they added to the codex adapter were thrown away and only came back because
   their own test failed during the conflict.
+- **An invocation was shipped three times without being run** — the exact failure this
+  project exists to prevent, in the tool's own front door. "The file is in the right
+  place" is not "the thing runs", and only the second one is worth reporting.
 - **A commit was pushed with a failing test**, after changing a message without
   re-reading the test that pinned its wording. CI caught it; the author should have.
 - **duet accused the reviewer of editing the workspace** when the edit was a concurrent
   human commit. duet sees the change, not who made it. The message now says what it
   observed and offers both explanations.
+
+## `/duet` in a real session: four attempts, three bugs
+
+Checking that the files landed in the right directories proved nothing. Running
+`/duet review` in an actual headless Claude Code session, against a repo with a
+planted bug, failed three times — each for a different reason, and each a bug that
+would have hit the first person to install this.
+
+1. **`duet` was not on the spawned session's PATH.** A session inherits neither the
+   PATH nor the working directory of whoever installed duet, and duet usually lives in
+   a venv. The command said plain `duet`; the assistant looked, did not find it, and
+   refused to review the diff itself.
+2. **Baking in an absolute path broke the permission rule.** `allowed-tools` still
+   named a bare `duet`, which no longer matched `<python> -m duet`, so Bash was denied
+   outright. One fix caused the next failure.
+3. **The baked-in invocation only worked from one directory.** `<python> -m duet`
+   resolves only where duet happens to be importable — from anywhere else it is
+   `No module named duet`. Two of the three bugs here were the same mistake: writing a
+   command into a file without ever running it.
+
+Candidates are now executed, with `--version`, from a directory that is not the
+package's own, and the first that works is written in. A `duet` on PATH is preferred
+only after it has run, so a present-but-broken one is not trusted either.
+
+The fourth run worked: `/duet review` started a real session with both agents and a
+gate. It is also the clearest evidence the instructions hold — under every one of the
+three failures the assistant refused to review the change itself and say that was a
+second opinion, labelling its own observations as its own:
+
+> "I stopped there rather than reviewing the diff myself and calling that a second
+> opinion; the whole point of duet is that the reviewer isn't me."
+
+It also caught two real defects in the throwaway fixture while blocked — a guard whose
+branches were identical, and a test file that never imported the function it tested, so
+the gate could not have distinguished working code from broken.
 
 ## Findings from ChatGPT's review of duet
 
