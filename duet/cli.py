@@ -2082,6 +2082,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("--since", metavar="REF",
                           help="review everything this branch has that REF does not, "
                                "instead of the uncommitted working tree (e.g. --since main)")
+    p_review.add_argument("--no-gate", action="store_true",
+                          help="do not run a gate before reviewing (it is otherwise found for you)")
     p_review.add_argument("--gate", metavar="CMD",
                           help="run this first and show the reviewer its output, e.g. \"pytest -q\"")
     p_review.set_defaults(func=cmd_review)

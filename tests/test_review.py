@@ -457,3 +457,15 @@ def test_an_unreadable_task_file_is_a_setup_error(tmp_path, capsys):
     pin(repo(tmp_path), script=[CLEAN])
     code, data = review_json(tmp_path, capsys, "-f", str(tmp_path / "nope.txt"))
     assert code == 2 and "could not read --file" in data["error"]
+
+
+def test_review_accepts_no_gate_like_run_does(tmp_path):
+    """`--no-gate` existed on `run` and not on `review`, for no reason a user
+    could infer. I hit the resulting error twice in one session before fixing
+    it, which is the definition of a papercut worth removing."""
+    from duet.cli import build_parser
+
+    parser = build_parser()
+    for command in ("run", "review"):
+        args = parser.parse_args([command, "x", "--no-gate"])
+        assert args.no_gate is True, command
