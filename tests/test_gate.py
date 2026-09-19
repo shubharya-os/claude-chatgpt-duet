@@ -64,6 +64,17 @@ def test_a_makefile_needs_an_actual_test_target(tmp_path, tools_present):
     assert detect(str(tmp_path)) == "make test"
 
 
+def test_a_makefile_is_no_use_without_make(tmp_path, monkeypatch):
+    """Fresh macOS without the command line tools, or a slim container, has no
+    `make`. The Makefile branch returned early and skipped the runnability
+    check every other marker goes through, so it handed back a gate that could
+    not start — and a gate that cannot start fails every round and vetoes both
+    agents forever."""
+    monkeypatch.setattr("duet.gate.shutil.which", lambda name: None)
+    (tmp_path / "Makefile").write_text("test:\n\t./run_tests\n")
+    assert detect(str(tmp_path)) is None
+
+
 def test_other_ecosystems(tmp_path, tools_present):
     for marker, expected in [("Cargo.toml", "cargo test"), ("go.mod", "go test ./..."),
                              ("mix.exs", "mix test"), ("pom.xml", "mvn -q test")]:

@@ -28,6 +28,16 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e . pytest
+      # install.sh's POSIX-sh guarantee is only as good as what actually
+      # exercises it: tests/test_install_sh.py skips dash and shellcheck when
+      # they are absent, so without this step the guarantee held on ubuntu by
+      # luck (its default image happens to ship both) and not at all on macOS.
+      - name: dash and shellcheck, so install.sh's POSIX checks cannot silently skip
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y dash shellcheck
+      - name: dash and shellcheck, so install.sh's POSIX checks cannot silently skip
+        if: matrix.os == 'macos-latest'
+        run: brew install dash shellcheck
       - name: tests
         run: pytest -q
       - name: a plain install provides the duet command
