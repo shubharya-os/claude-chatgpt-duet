@@ -138,16 +138,25 @@ fi
 
 # --- set it up -------------------------------------------------------------
 say ""
+
+# Piped from curl, stdin is the script itself, so `duet setup` has nothing to
+# read an answer from. Reconnect to the terminal when there is one — that is
+# what makes this a single command rather than "install, now run one more".
+if [ ! -t 0 ] && [ -r /dev/tty ]; then
+  exec < /dev/tty || true
+fi
+
 if [ -t 0 ]; then
-  # A real terminal: setup can ask before installing the agent CLIs.
-  "$DUET" setup
+  $DUET setup
 else
-  # Piped from curl, so stdin is the script itself and nothing can be asked.
-  say "Installed. Finish with one more command, which needs a terminal it can"
-  say "ask questions in:"
+  # No terminal at all: a CI job, or a shell with no controlling tty. Nothing
+  # can be asked, so say what is left rather than guessing at consent.
+  say "Installed. One command left, in a terminal it can ask questions in:"
   say ""
-  say "    \"$DUET\" setup"
+  say "    $DUET setup"
   say ""
   say "It installs the two agent CLIs if missing, signs you in to both (no API"
   say "keys — your Claude and ChatGPT plans), and adds /duet to Claude Code."
+  say ""
+  say "Non-interactive? \`$DUET setup --yes\` installs without asking first."
 fi
