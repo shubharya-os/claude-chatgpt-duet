@@ -344,6 +344,38 @@ One trap worth recording, since it is not duet's: the first version of the test 
 On a machine with slow reverse DNS that blocks for tens of seconds. Binding without
 the lookup took it to 1 second. A useful test that is slow is a test people skip.
 
+## Running the published one-liner on the user's own machine
+
+Every clean-room test of the installer passed. Running the published command in the
+machine owner's own terminal failed on the first line:
+
+    duet needs Python 3.9 or newer.
+
+On a Mac with Python 3.12 installed. `command -v python3` resolves to a broken x86
+binary in `/usr/local/bin`, the working interpreter is in `/opt/homebrew/bin`, and
+that is not on this user's PATH at all — so searching PATH found nothing usable and
+the installer gave up. The same shadowed-toolchain shape that had already broken both
+agent CLIs earlier, now in the one command everything else depends on.
+
+It now checks the usual absolute locations after PATH, and every candidate has to
+execute before it is accepted, because a binary for the wrong architecture is present,
+executable and useless.
+
+Two more from the same round:
+
+- `curl … | sh` left stdin pointing at the script, so `duet setup` had nothing to read
+  an answer from and the installer deferred it — making the headline one-liner two
+  steps in practice. It reconnects to `/dev/tty` when a terminal exists, and still
+  defers cleanly where there is no controlling terminal, such as CI.
+- `[ -r /dev/tty ]` was not a sufficient guard: the file can exist and still fail to
+  open, and the shell prints "Device not configured" itself. The attempt is made in a
+  subshell where that noise can be discarded, and only repeated for real once it is
+  known to work. An alarming error in an installer costs trust even when it is
+  harmless.
+
+The lesson is the one this project keeps relearning: a clean room is not a machine.
+Four of the bugs in this document came from someone else's PATH.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,

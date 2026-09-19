@@ -159,8 +159,12 @@ say ""
 # Piped from curl, stdin is the script itself, so `duet setup` has nothing to
 # read an answer from. Reconnect to the terminal when there is one — that is
 # what makes this a single command rather than "install, now run one more".
-if [ ! -t 0 ] && [ -r /dev/tty ]; then
-  exec < /dev/tty || true
+# `[ -r /dev/tty ]` is not enough: the file can exist and still fail to open
+# ("Device not configured") in a session with no controlling terminal, and the
+# shell prints that failure itself. Try it in a subshell where the noise can be
+# discarded, and only redirect for real once it is known to work.
+if [ ! -t 0 ] && (exec < /dev/tty) 2>/dev/null; then
+  exec < /dev/tty
 fi
 
 if [ -t 0 ]; then
