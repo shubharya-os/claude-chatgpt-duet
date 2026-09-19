@@ -7,11 +7,21 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Every bug found in this project so far came from the machine, not the
+    # logic: a shadowed interpreter, a tool that was not on PATH, a command
+    # that only resolved from one directory. One OS in CI would not have seen
+    # any of them.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.9", "3.11", "3.13"]
+        exclude:
+          # Keep the matrix small: the middle version on one OS is enough to
+          # catch anything the other two would.
+          - os: macos-latest
+            python-version: "3.11"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
