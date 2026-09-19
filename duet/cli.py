@@ -243,6 +243,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     cfg.task = task
     cfg.context = read_context(args)
 
+    if cfg.gate:
+        unusable = gate_detect.why_unusable(cfg.gate, cfg.root)
+        if unusable:
+            print(ui.red("✗ ") + "the acceptance gate cannot run: %s" % unusable)
+            print(ui.dim("  gate: ") + cfg.gate)
+            print()
+            print("  A gate that cannot start fails every turn, and a failing gate")
+            print("  vetoes both agents — so the session could never finish.")
+            print()
+            print(ui.dim("  fix: ") + "install it, give a command that works with "
+                  + ui.bold("--gate") + ", or")
+            print(ui.dim("       ") + "run without one using " + ui.bold("--no-gate")
+                  + ui.dim(" (they can then only agree by argument)"))
+            return 3
+
     problems = preflight(cfg)
     if problems:
         for line in problems:
@@ -1166,6 +1181,21 @@ def cmd_resume(args: argparse.Namespace) -> int:
     reason, fixes = _resume_blocker(data, path.name, cfg.max_rounds)
     if reason:
         return refuse(reason, fixes, session=path.name)
+
+    if cfg.gate:
+        unusable = gate_detect.why_unusable(cfg.gate, cfg.root)
+        if unusable:
+            print(ui.red("✗ ") + "the acceptance gate cannot run: %s" % unusable)
+            print(ui.dim("  gate: ") + cfg.gate)
+            print()
+            print("  A gate that cannot start fails every turn, and a failing gate")
+            print("  vetoes both agents — so the session could never finish.")
+            print()
+            print(ui.dim("  fix: ") + "install it, give a command that works with "
+                  + ui.bold("--gate") + ", or")
+            print(ui.dim("       ") + "run without one using " + ui.bold("--no-gate")
+                  + ui.dim(" (they can then only agree by argument)"))
+            return 3
 
     problems = preflight(cfg)
     if problems:

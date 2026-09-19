@@ -144,6 +144,28 @@ def detect(root: str) -> Optional[str]:
     return None
 
 
+def why_unusable(command: str, root: str) -> Optional[str]:
+    """Why this gate cannot run, or None if it can.
+
+    A gate that cannot start fails every turn, and a failing gate vetoes both
+    agents — so the session is unwinnable before it begins, however good the
+    work is. Better to refuse in a second than to discover it eight rounds and
+    two subscriptions later, which is exactly what happened once.
+    """
+    command = (command or "").strip()
+    if not command:
+        return None
+    first = command.split()[0]
+    if shutil.which(first):
+        return None
+    candidate = Path(root) / first
+    if candidate.is_file() and os.access(str(candidate), os.X_OK):
+        return None
+    if first in ("PYTHONPATH", "CI") or "=" in first:
+        return None          # a leading assignment; the real command follows
+    return "%r is not on PATH and is not an executable in this directory" % first
+
+
 def describe(command: Optional[str]) -> str:
     if command:
         return "found a test command: %s" % command

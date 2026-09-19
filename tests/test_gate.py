@@ -129,3 +129,38 @@ def test_an_npm_script_is_dropped_when_npm_is_missing(tmp_path, monkeypatch):
     (tmp_path / "package.json").write_text(_json.dumps({"scripts": {"test": "jest"}}))
     monkeypatch.setattr("duet.gate.shutil.which", lambda name: None)
     assert detect(str(tmp_path)) is None
+
+
+def test_an_unrunnable_gate_is_refused_before_the_session_starts(tmp_path, capsys):
+    """Discovered the expensive way: a session ran eight rounds, hit arbitration,
+    and could never have finished, because its gate could not start and a failing
+    gate vetoes both agents. Refusing takes a second."""
+    from duet.cli import main
+
+    code = main(["run", "do a thing", "-C", str(tmp_path), "--gate", "definitely-not-installed"])
+    assert code == 3
+    out = capsys.readouterr().out
+    assert "cannot run" in out
+    assert "could never finish" in out
+    assert "--no-gate" in out                 # and both ways out are named
+    assert "--gate" in out
+
+
+def test_a_runnable_gate_is_not_refused(tmp_path, monkeypatch):
+    from duet.gate import why_unusable
+
+    assert why_unusable("echo hello", str(tmp_path)) is None
+    assert why_unusable("", str(tmp_path)) is None
+    assert why_unusable("CI=1 echo hello", str(tmp_path)) is None
+
+
+def test_a_project_local_launcher_is_runnable(tmp_path):
+    import stat
+
+    from duet.gate import why_unusable
+
+    launcher = tmp_path / "run-tests.sh"
+    launcher.write_text("#!/bin/sh\nexit 0\n")
+    launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    assert why_unusable("run-tests.sh", str(tmp_path)) is None
+    assert why_unusable("missing.sh", str(tmp_path)) is not None
