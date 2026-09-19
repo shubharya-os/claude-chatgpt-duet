@@ -304,8 +304,10 @@ def _same_vendor_fallback(cfg: Config):
         if cls is None:
             continue
         probe = cls.probe(spec.options)
-        signed = probe.signed_in if probe.signed_in is not None else probe.ok
-        if probe.ok or signed:
+        # `ok`, not `signed_in`. This recommends a pair that can run right now;
+        # an account signed in but out of quota cannot, and doctor is holding
+        # that verdict two lines above.
+        if probe.ok:
             usable.add(spec.backend)
     if "claude-code" in usable and "codex-cli" not in usable:
         return "claude:opus+claude:sonnet", "Claude alone can still pair two of its models:"
@@ -481,7 +483,8 @@ def cmd_login(args: argparse.Namespace) -> int:
         if (probe.signed_in or probe.ok) and not args.force:
             print(ui.green("✓ ") + "%s is already signed in — %s" % (name, probe.detail))
             continue
-        binary = cls(name=name, cwd=root).bin
+        agent = cls(name=name, cwd=root)
+        binary = agent.bin
         if not Adapter.which(binary):
             print(ui.red("✗ ") + "%s: %s" % (name, probe.detail))
             if probe.fix:
@@ -490,10 +493,13 @@ def cmd_login(args: argparse.Namespace) -> int:
             continue
         print()
         print(ui.bold("signing %s in with your %s account" % (name, account)))
-        print(ui.dim("  running: %s %s" % (binary, " ".join(sub))))
+        print(ui.dim("  running: %s" % " ".join(list(agent.launch) + list(sub))))
         print(ui.dim("  this opens your browser; duet never sees your credentials."))
         try:
-            code = subprocess.call([binary, *sub])
+            # The launch prefix, not the binary: under the npx fallback the
+            # binary is npx itself, and appending `auth login` to it asks the
+            # registry for packages by those names instead of signing anyone in.
+            code = subprocess.call(list(agent.launch) + list(sub))
         except (OSError, KeyboardInterrupt) as exc:
             print(ui.red("  could not run it: %s" % exc))
             failures += 1
@@ -805,14 +811,22 @@ def cmd_setup(args: argparse.Namespace) -> int:
         # duet can drive both CLIs through npx, so installing them globally is
         # a speed choice rather than a requirement — and it is the only step of
         # setup that changes anything outside duet's own directory.
-        wants_global = True
         if has_npx:
             print(ui.green("   ✓ ") + "duet can run them with npx, so this is optional.")
             print(ui.dim("     A global install makes every turn start faster:"))
-            print("       " + ui.bold(command))
-            wants_global = bool(has_npm) and _ask("   install them globally?", args.yes)
-            if not wants_global:
+        else:
+            print(ui.dim("   this installs them globally with npm:"))
+        print("       " + ui.bold(command))
+        # Asked on every path. This is the one step of setup that changes
+        # anything outside duet's own directory, and for a while it did so
+        # unprompted whenever npx happened to be missing.
+        wants_global = bool(has_npm) and _ask("   install them globally?", args.yes)
+        if not wants_global:
+            if has_npx:
                 print(ui.dim("   continuing with npx — nothing installed globally."))
+            else:
+                print(ui.yellow("   skipped") + " — run that yourself, then `duet setup` again.")
+                return 1
 
         if wants_global:
             if not has_npm:

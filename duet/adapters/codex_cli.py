@@ -334,7 +334,10 @@ class CodexCliAdapter(Adapter):
                     # Confirm it before believing it. A blip that happens to say
                     # this once cost a whole round in a real session, and the
                     # login was fine before and after.
-                    logged_in, detail = read_login_status(self.bin)
+                    # self.launch, not self.bin: under the npx fallback the
+                    # binary is npx, and `npx login status` produces exactly
+                    # the false sign-out this re-check exists to rule out.
+                    logged_in, detail = read_login_status(self.launch)
                     if logged_in is False:
                         return AgentReply(
                             text="", error="codex is not signed in. Run: %s" % LOGIN_HINT
@@ -396,6 +399,7 @@ class CodexCliAdapter(Adapter):
         # doctor reports "not found" for a CLI that runs perfectly well through
         # npx — and the two disagree about the same machine.
         launch, binary, globally = cls.resolve_launch(DEFAULT_CANDIDATES)
+        where = binary if globally else "via npx, nothing installed globally"
         if not binary:
             return Probe(
                 ok=False,
@@ -408,7 +412,7 @@ class CodexCliAdapter(Adapter):
                          fix=LOGIN_HINT, signed_in=False)
         if logged_in is None:
             if detail.startswith("could not run"):
-                return Probe(ok=False, detail="installed at %s, but %s" % (binary, detail),
+                return Probe(ok=False, detail="installed at %s, but %s" % (where, detail),
                              fix=RUNTIME_FIX)
             return Probe(ok=False, detail="could not read the login state: %s" % detail,
                          fix=LOGIN_HINT)

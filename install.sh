@@ -168,14 +168,14 @@ if [ ! -t 0 ] && (exec < /dev/tty) 2>/dev/null; then
 fi
 
 if [ -t 0 ]; then
-  $DUET setup
+  "$DUET" setup
 else
   # No terminal at all: a CI job, or a shell with no controlling tty. Installing
   # /duet needs no consent — it writes into the caller's own Claude and Codex
   # config directories, which is what running this asked for — so do that part
   # now and leave only what genuinely needs a human: a global npm install, and
   # two browser sign-ins that cannot be automated at all.
-  if $DUET skill install >/dev/null 2>&1; then
+  if "$DUET" skill install >/dev/null 2>&1; then
     say "Installed. /duet is in place for Claude Code and Codex."
   else
     say "Installed."

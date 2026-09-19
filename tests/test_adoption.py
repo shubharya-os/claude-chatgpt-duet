@@ -276,3 +276,81 @@ def test_no_fallback_is_offered_when_neither_side_works(tmp_path, monkeypatch, c
                                 ok=False, signed_in=False, detail="not signed in", fix="log in")))
     assert main(["doctor", "-C", str(tmp_path)]) == 1
     assert "Only have one of the two?" not in capsys.readouterr().out
+
+
+# --- findings from reviewing the npx change ---------------------------------
+
+def test_login_uses_the_launch_prefix_not_the_bare_binary(tmp_path, monkeypatch):
+    """Under the npx fallback `.bin` is npx itself, so appending the agent's
+    subcommands produced `npx auth login` — not a sign-in, and an invitation for
+    npx to fetch whatever package is named `auth`. The headline capability of
+    the npx change did not work end to end."""
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    ran = []
+    monkeypatch.setattr("duet.cli.subprocess.call", lambda argv, *a, **k: ran.append(list(argv)) or 0)
+
+    # One patch: duet.cli.Adapter and duet.adapters.base.Adapter are the same
+    # class, so two setattrs would just overwrite each other. Resolve npx by
+    # name and by absolute path, and nothing else — the no-global-install case.
+    def only_npx(*candidates):
+        return "/usr/bin/npx" if any(str(c).endswith("npx") for c in candidates) else None
+
+    monkeypatch.setattr("duet.adapters.base.Adapter.which", staticmethod(only_npx))
+
+    states = iter([Probe(ok=False, signed_in=False, detail="not signed in", fix="log in"),
+                   Probe(ok=True, detail="signed in")])
+    monkeypatch.setattr("duet.adapters.claude_code.ClaudeCodeAdapter.probe",
+                        classmethod(lambda cls, config=None: next(states, Probe(ok=True, detail="signed in"))))
+    monkeypatch.setattr("duet.adapters.codex_cli.CodexCliAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(ok=True, detail="signed in")))
+
+    main(["login", "claude", "-C", str(tmp_path)])
+    assert ran, "login never ran anything"
+    argv = ran[0]
+    assert argv[:3] == ["/usr/bin/npx", "-y", "@anthropic-ai/claude-code"], argv
+    assert argv[-2:] == ["auth", "login"], argv
+    assert argv[1] != "auth", "npx would resolve 'auth' as a package name"
+
+
+def test_setup_asks_before_installing_globally_even_without_npx(tmp_path, monkeypatch, capsys):
+    """The ask sat inside the `if has_npx:` branch, so on a machine with npm and
+    no npx the global install ran unprompted — and without printing what it was
+    about to do. It is the only step that changes anything outside duet."""
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    calls = []
+    monkeypatch.setattr("duet.cli.subprocess.call", lambda cmd, **k: calls.append(cmd) or 0)
+    monkeypatch.setattr("duet.cli.Adapter.which",
+                        staticmethod(lambda name: "/usr/bin/npm" if name == "npm" else None))
+    monkeypatch.setattr("duet.adapters.claude_code.ClaudeCodeAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(ok=True, detail="signed in")))
+    monkeypatch.setattr("duet.adapters.codex_cli.CodexCliAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(ok=True, detail="signed in")))
+    monkeypatch.setattr("duet.cli._ask", lambda question, yes: False)   # user declines
+    monkeypatch.setattr("duet.cli.Path.home", staticmethod(lambda: tmp_path / "home"))
+
+    assert main(["setup", "-C", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "npm install -g" in out          # said what it would do
+    assert not calls, "installed globally despite the user declining"
+    assert "skipped" in out
+
+
+def test_a_quota_exhausted_side_is_not_recommended_as_a_pair(tmp_path, monkeypatch, capsys):
+    """doctor knows the allowance is gone two lines above; recommending
+    codex+codex from that same information is a pair that cannot run a turn."""
+    from duet.adapters.base import Probe
+    from duet.cli import main
+
+    monkeypatch.setattr("duet.adapters.claude_code.ClaudeCodeAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(
+                            ok=False, signed_in=False, detail="not signed in", fix="log in")))
+    monkeypatch.setattr("duet.adapters.codex_cli.CodexCliAdapter.probe",
+                        classmethod(lambda cls, config=None: Probe(
+                            ok=False, signed_in=True, detail="out of quota", fix="wait")))
+
+    assert main(["doctor", "-C", str(tmp_path)]) == 1
+    assert "codex+codex" not in capsys.readouterr().out
