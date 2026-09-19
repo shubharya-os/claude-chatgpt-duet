@@ -517,7 +517,10 @@ def cmd_login(args: argparse.Namespace) -> int:
                 print("    " + ui.yellow("but: ") + after.fix)
         else:
             failures += 1
-            print(ui.red("✗ ") + "%s is still not signed in (%s exited %d)" % (name, sub[0], code))
+            # Name the same thing the "running:" line above named. This used to
+            # print sub[0] — "auth exited 1" — a command that does not exist,
+            # and under npx neither word is the program being run.
+            print(ui.red("✗ ") + "%s is still not signed in (exited %d)" % (name, code))
             if after.fix:
                 print("    " + ui.yellow("try: ") + after.fix)
 
@@ -741,7 +744,26 @@ AGENT_PACKAGES = {
 
 
 def _missing_agent_clis() -> List[str]:
-    return [name for name in ("claude", "codex") if not Adapter.which(name)]
+    """Which agent CLIs duet cannot already reach.
+
+    Asks the adapters rather than PATH. They also resolve DUET_CLAUDE_BIN,
+    ~/.claude/local/claude and ~/.local/bin/codex, so a PATH-only check called
+    a CLI missing on a machine where duet runs it perfectly well — and since
+    setup gained a hard stop on declining the install, that mistake could abort
+    setup outright.
+    """
+    from duet.adapters.claude_code import DEFAULT_CANDIDATES as CLAUDE_CANDIDATES
+    from duet.adapters.claude_code import ClaudeCodeAdapter
+    from duet.adapters.codex_cli import DEFAULT_CANDIDATES as CODEX_CANDIDATES
+    from duet.adapters.codex_cli import CodexCliAdapter
+
+    missing = []
+    for name, cls, candidates in (("claude", ClaudeCodeAdapter, CLAUDE_CANDIDATES),
+                                  ("codex", CodexCliAdapter, CODEX_CANDIDATES)):
+        _, binary, globally = cls.resolve_launch(candidates)
+        if not binary or not globally:
+            missing.append(name)
+    return missing
 
 
 def _npm_global_bin() -> Optional[str]:

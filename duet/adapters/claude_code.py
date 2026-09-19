@@ -217,6 +217,10 @@ class ClaudeCodeAdapter(Adapter):
         # doctor reports "not found" for a CLI that runs perfectly well through
         # npx — and the two disagree about the same machine.
         launch, binary, globally = cls.resolve_launch(DEFAULT_CANDIDATES)
+        # Computed here, before any return: the error branches were printing
+        # the npx path as the install location too, which is the same misreport
+        # in the messages people see when something is already wrong.
+        where = binary if globally else "via npx, nothing installed globally"
         if not binary:
             return Probe(
                 ok=False,
@@ -231,26 +235,25 @@ class ClaudeCodeAdapter(Adapter):
             # has to be decided before falling back to --version, which fails
             # the same way and would send the user to a login that cannot work.
             if detail.startswith("could not run"):
-                return Probe(ok=False, detail="installed at %s, but %s" % (binary, detail),
+                return Probe(ok=False, detail="installed at %s, but %s" % (where, detail),
                              fix=RUNTIME_FIX)
             try:
                 proc = subprocess.run(list(launch) + ["--version"], capture_output=True, text=True, timeout=30)
             except (OSError, subprocess.SubprocessError) as exc:
-                return Probe(ok=False, detail="found %s but could not run it: %s" % (binary, exc),
+                return Probe(ok=False, detail="found %s but could not run it: %s" % (where, exc),
                              fix=RUNTIME_FIX)
             if proc.returncode != 0:
                 version_noise = (proc.stdout or "") + (proc.stderr or "")
                 broken = looks_unrunnable(version_noise)
                 if broken:
                     return Probe(ok=False,
-                                 detail="installed at %s, but could not run claude: %s" % (binary, broken),
+                                 detail="installed at %s, but could not run claude: %s" % (where, broken),
                                  fix=RUNTIME_FIX)
-                return Probe(ok=False, detail="%s --version exited %d" % (binary, proc.returncode),
+                return Probe(ok=False, detail="%s --version exited %d" % (where, proc.returncode),
                              fix=LOGIN_HINT)
             return Probe(
                 ok=False,
                 detail="installed, but the login state could not be read (%s)" % detail,
                 fix=LOGIN_HINT,
             )
-        where = binary if globally else "via npx, nothing installed globally"
         return Probe(ok=True, detail="%s (%s)" % (detail, where))

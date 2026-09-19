@@ -873,3 +873,28 @@ def test_setting_bin_rewrites_what_actually_runs(tmp_path):
     stub = fake_bin(tmp_path, "claude-stub", 'echo "{}"')
     agent.bin = stub
     assert agent.launch == [stub]
+
+
+def test_the_probe_says_via_npx_rather_than_naming_it_as_the_install(tmp_path, monkeypatch):
+    """`where` was computed and then used on only one branch, so the green line
+    almost every healthy machine sees still claimed the CLI was installed at
+    npx's path — the exact misreport the fix was supposed to remove.
+
+    An error that quotes the failing path is fine; claiming the CLI lives there
+    is not.
+    """
+    npx = fake_bin(tmp_path, "npx", r"""
+# `npx -y <pkg> auth status` and `... login status` both answer as the CLI would
+case "$*" in
+  *"auth status"*) echo '{"loggedIn": true, "authMethod": "claudeai"}' ;;
+  *"login status"*) echo "Logged in using ChatGPT" ;;
+  *) echo "1.0.0" ;;
+esac
+""")
+    monkeypatch.setattr("duet.adapters.base.Adapter.which",
+                        staticmethod(lambda *c: npx if any(str(x).endswith("npx") for x in c) else None))
+    for cls in (ClaudeCodeAdapter, CodexCliAdapter):
+        probe = cls.probe()
+        assert probe.ok, "%s: %s" % (cls.__name__, probe.detail)
+        assert "via npx, nothing installed globally" in probe.detail, probe.detail
+        assert npx not in probe.detail, "named npx as the install location: %s" % probe.detail

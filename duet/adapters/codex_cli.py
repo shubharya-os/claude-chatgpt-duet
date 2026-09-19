@@ -447,11 +447,11 @@ class CodexCliAdapter(Adapter):
                        "time, so it may still be in force: if the first ChatGPT turn "
                        "stops again, %s  (clears itself on the next turn that "
                        "succeeds; or delete %s)"
-                       % (detail, binary, seen, OTHER_PAIRS, path),
+                       % (detail, where, seen, OTHER_PAIRS, path),
             )
         return Probe(
             ok=True,
             signed_in=True,
             detail="%s (%s) — Codex usage quota not checked "
-                   "(reading it would cost a model call)" % (detail, binary),
+                   "(reading it would cost a model call)" % (detail, where),
         )

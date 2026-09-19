@@ -418,6 +418,41 @@ Three things went wrong while doing it, all caught by the suite:
    while the CLI is still missing means it installed somewhere not on PATH, where "run
    it again" is the wrong advice. Their test caught it.
 
+## Reviewing my own changes, twice
+
+The launch and setup code written in one sitting was the least-reviewed in the repo,
+and three bugs had already been caught in it by the test suite. Rather than declare it
+finished, a different Claude model reviewed it. It found **eight**, one of them a
+blocker that made the whole change pointless:
+
+**`duet login` ran `npx auth login`.** It took the adapter's `.bin` and appended the
+agent's subcommands; under the npx fallback `.bin` *is* npx, so signing in asked the
+npm registry for packages named `auth` and `login`. The headline capability of the
+change, broken on exactly the machine the change exists to serve — and pushed, one
+message after I had written "the technical work is done".
+
+The same mistake sat in the codex blip re-check (`npx login status` reads as a
+sign-out, producing the precise false verdict that re-check was added to prevent), and
+the setup rewrite had moved the consent prompt inside `if has_npx:`, so on a machine
+with npm and no npx the global install ran unprompted — the one step that changes
+anything outside duet's own directory.
+
+**Then the fixes were reviewed too**, on the same reasoning, and that found three more.
+The sharpest: the "report npx honestly" fix was *half applied* — `where` was computed
+and then used only on the rare broken-runtime branch, while both success paths still
+printed the npx path as the install location. The green line almost every healthy
+machine sees still carried the exact misreport the fix claimed to remove. Fixing that
+took two passes as well, because the first replacement missed one of the two lines.
+
+Also found: the sign-in failure printed `sub[0]` — "auth exited 1", a command that does
+not exist — and `_missing_agent_clis` consulted only PATH while the adapters resolve
+`DUET_CLAUDE_BIN`, `~/.claude/local/claude` and `~/.local/bin/codex`, so setup could
+abort on a machine where duet runs perfectly well.
+
+Eleven findings across the two reviews, all with tests. The pattern is worth naming:
+every one of them is the author being confident about code he had just written, and
+none were caught by reading it back.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,

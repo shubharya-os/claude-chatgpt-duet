@@ -173,7 +173,7 @@ def test_setup_names_the_npm_directory_when_the_clis_are_still_missing(tmp_path,
     from duet.cli import main
 
     monkeypatch.setattr("duet.cli.Adapter.which",
-                        staticmethod(lambda name: "/usr/bin/npm" if name == "npm" else None))
+                        staticmethod(lambda *c: "/usr/bin/npm" if "npm" in c else None))
     monkeypatch.setattr("duet.cli.subprocess.call", lambda *a, **k: 0)
     monkeypatch.setattr("duet.cli._npm_global_bin", lambda: "/opt/node/bin")
     monkeypatch.setattr("duet.cli.Path.home", staticmethod(lambda: tmp_path / "home"))
@@ -189,7 +189,7 @@ def test_setup_says_how_to_find_the_npm_directory_when_npm_will_not_say(tmp_path
     from duet.cli import main
 
     monkeypatch.setattr("duet.cli.Adapter.which",
-                        staticmethod(lambda name: "/usr/bin/npm" if name == "npm" else None))
+                        staticmethod(lambda *c: "/usr/bin/npm" if "npm" in c else None))
     monkeypatch.setattr("duet.cli.subprocess.call", lambda *a, **k: 0)
     monkeypatch.setattr("duet.cli._npm_global_bin", lambda: None)
     monkeypatch.setattr("duet.cli.Path.home", staticmethod(lambda: tmp_path / "home"))
@@ -221,7 +221,7 @@ def test_a_still_broken_npm_run_keeps_the_old_message(tmp_path, monkeypatch, cap
     from duet.cli import main
 
     monkeypatch.setattr("duet.cli.Adapter.which",
-                        staticmethod(lambda name: "/usr/bin/npm" if name == "npm" else None))
+                        staticmethod(lambda *c: "/usr/bin/npm" if "npm" in c else None))
     monkeypatch.setattr("duet.cli.subprocess.call", lambda *a, **k: 1)
     monkeypatch.setattr("duet.cli.Path.home", staticmethod(lambda: tmp_path / "home"))
 
@@ -324,7 +324,7 @@ def test_setup_asks_before_installing_globally_even_without_npx(tmp_path, monkey
     calls = []
     monkeypatch.setattr("duet.cli.subprocess.call", lambda cmd, **k: calls.append(cmd) or 0)
     monkeypatch.setattr("duet.cli.Adapter.which",
-                        staticmethod(lambda name: "/usr/bin/npm" if name == "npm" else None))
+                        staticmethod(lambda *c: "/usr/bin/npm" if "npm" in c else None))
     monkeypatch.setattr("duet.adapters.claude_code.ClaudeCodeAdapter.probe",
                         classmethod(lambda cls, config=None: Probe(ok=True, detail="signed in")))
     monkeypatch.setattr("duet.adapters.codex_cli.CodexCliAdapter.probe",
@@ -354,3 +354,30 @@ def test_a_quota_exhausted_side_is_not_recommended_as_a_pair(tmp_path, monkeypat
 
     assert main(["doctor", "-C", str(tmp_path)]) == 1
     assert "codex+codex" not in capsys.readouterr().out
+
+
+def test_a_cli_installed_off_path_is_not_called_missing(tmp_path, monkeypatch):
+    """The check only looked at PATH while the adapters also resolve
+    DUET_CLAUDE_BIN, ~/.claude/local/claude and ~/.local/bin/codex. On a machine
+    where the CLI lives there, setup offered to npm-install something duet could
+    already run — and after setup gained a hard stop on declining, that mistake
+    could abort setup on a working machine."""
+    from duet.cli import _missing_agent_clis
+
+    installed = tmp_path / "claude"
+    installed.write_text("#!/bin/sh\nexit 0\n")
+    installed.chmod(0o755)
+
+    monkeypatch.setattr("duet.adapters.base.Adapter.which",
+                        staticmethod(lambda *c: str(installed) if any("claude" in str(x) for x in c) else None))
+    assert "claude" not in _missing_agent_clis()
+
+
+def test_a_cli_only_reachable_through_npx_still_counts_as_not_installed(monkeypatch):
+    """npx can run it, but "installed globally" is the question setup is asking,
+    and the answer decides whether to offer the install."""
+    from duet.cli import _missing_agent_clis
+
+    monkeypatch.setattr("duet.adapters.base.Adapter.which",
+                        staticmethod(lambda *c: "/usr/bin/npx" if any(str(x).endswith("npx") for x in c) else None))
+    assert _missing_agent_clis() == ["claude", "codex"]
