@@ -156,7 +156,7 @@ duet doctor
 
 ```
 claude   ✓ signed in (claude.ai)
-chatgpt  ✓ Logged in using ChatGPT
+chatgpt  ✓ Logged in using ChatGPT — Codex usage quota not checked
 
 ready. try: duet run "your task here"
 ```
@@ -164,6 +164,26 @@ ready. try: duet run "your task here"
 `doctor` asks each CLI for its real login state rather than checking a binary exists —
 a tool that runs but is signed out is the most common way this kind of thing wastes
 your afternoon.
+
+It also says what it has *not* checked. A ChatGPT account can be signed in and out of
+Codex usage allowance at the same time, and nothing codex offers reports the remaining
+allowance without spending a model call — which would bill your quota to tell you about
+your quota, on every `doctor` run. So `doctor` claims only what `codex login status`
+proves, and duet writes down the one moment the account itself says the allowance is
+gone:
+
+```
+chatgpt  ✗ signed in, but out of Codex usage quota until 2026-10-18 23:18
+             (the account said so at 2026-10-18 11:02)
+         fix: wait for 2026-10-18 23:18, upgrade the plan at
+              https://chatgpt.com/explore/plus, or run this pair another way:
+              `--pair claude+gpt` uses an OpenAI API key instead, and
+              `--pair claude:opus+claude:sonnet` uses two Claude models.
+```
+
+The note lives in `~/.duet/codex-quota.json`, it is dropped as soon as the stated reset
+passes, and the first ChatGPT turn that succeeds clears it — because a turn that ran is
+the only cheap proof the allowance is back.
 
 <details>
 <summary>Prefer an API key?</summary>

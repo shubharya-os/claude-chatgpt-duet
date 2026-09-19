@@ -20,3 +20,14 @@ def _outside_a_duet_session(monkeypatch):
     monkeypatch.delenv("DUET_SESSION", raising=False)
     yield
     os.environ.pop("DUET_SESSION", None)
+
+
+@pytest.fixture(autouse=True)
+def _own_state_dir(tmp_path_factory, monkeypatch):
+    """No test reads or writes the developer's real ~/.duet.
+
+    duet remembers a Codex usage limit there. Left alone, a machine that had
+    actually hit one would fail the probe tests, and a test that provokes one
+    would leave that memory behind for the next real `duet doctor`.
+    """
+    monkeypatch.setenv("DUET_STATE_DIR", str(tmp_path_factory.mktemp("duet-state")))

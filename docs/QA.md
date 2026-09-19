@@ -60,6 +60,17 @@ caught by the stubbed suite alone.
 6. **`duet demo` left its report where nobody would look.** It runs in a temp
    workspace, so a following `duet report` found nothing. The demo now prints the
    exact command to read its own transcript.
+7. **A signed-in CLI with no quota left reported as ready.** The sibling of bug 1, and
+   found the same way: `codex login status` said "Logged in using ChatGPT", `doctor`
+   said ready, and the first ChatGPT turn died on `You've hit your usage limit`. Codex
+   exposes no way to read the remaining allowance that does not cost a model call — a
+   probe that spent one would bill the user's quota to report on their quota, every
+   `doctor` run. So `doctor` stopped claiming it: the line now reads "Codex usage quota
+   not checked", and the one moment the account does say the allowance is gone is
+   written to `~/.duet/codex-quota.json`, reported until the reset it named passes, and
+   forgotten on the next turn that succeeds. `duet login` reads the new `Probe.signed_in`
+   rather than `ok`, so an exhausted allowance no longer opens a browser at a sign-in
+   that was never broken.
 
 ## duet on duet: the full two-agent run
 

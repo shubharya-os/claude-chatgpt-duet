@@ -7,9 +7,13 @@ own tools, so both peers can read, edit and run things directly.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import tempfile
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -36,6 +40,37 @@ LOGIN_HINT = "codex login   (sign in with your ChatGPT account — no API key ne
 
 USAGE_LIMIT_MARKERS = ("usage limit", "rate limit", "quota")
 
+OTHER_PAIRS = (
+    "`--pair claude+gpt` uses an OpenAI API key instead, and "
+    "`--pair claude:opus+claude:sonnet` uses two Claude models."
+)
+
+
+def usage_limit_line(output: str) -> str:
+    """The line where codex says the account is out of allowance, or "".
+
+    Only ERROR lines count. codex echoes the prompt back into its own output,
+    and duet prompts are full of words like "quota" — matching anywhere would
+    let a task description about usage limits convince duet it had hit one.
+    """
+    for raw in (output or "").splitlines():
+        line = raw.strip()
+        if not line.upper().startswith("ERROR"):
+            continue
+        if any(marker in line.lower() for marker in USAGE_LIMIT_MARKERS):
+            return line
+    return ""
+
+
+def explain_usage_limit(line: str) -> str:
+    return (
+        "%s\n\nThat is the ChatGPT account's Codex allowance, not duet. "
+        "Wait for the reset, upgrade the plan, or run this pair another "
+        "way: %s\n\nduet has written this down: `duet doctor` will report the "
+        "account as out of quota until the reset passes or a ChatGPT turn "
+        "succeeds again." % (line, OTHER_PAIRS)
+    )
+
 
 def explain_failure(output: str) -> str:
     """Pull the actual error out of codex's output.
@@ -44,20 +79,142 @@ def explain_failure(output: str) -> str:
     line is at the *end*. Reporting the first N characters means reporting the
     banner — which is how a plain usage limit got misdiagnosed as a stdin bug
     and cost a code change. Look for the error, then fall back to the tail.
+
+    A usage limit wins over any other error in the same output. It is what duet
+    writes down and what doctor will report afterwards, so reporting something
+    else here would leave the user with a mystery error on screen and a quota
+    verdict in `duet doctor` that nothing on screen accounts for.
     """
     lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    limit = usage_limit_line(output)
+    if limit:
+        return explain_usage_limit(limit)
     errors = [line for line in lines if line.upper().startswith("ERROR")]
     if errors:
-        first = errors[0]
-        if any(marker in first.lower() for marker in USAGE_LIMIT_MARKERS):
-            return (
-                "%s\n\nThat is the ChatGPT account's Codex allowance, not duet. "
-                "Wait for the reset, upgrade the plan, or run this pair another "
-                "way: `--pair claude+gpt` uses an OpenAI API key instead, and "
-                "`--pair claude:opus+claude:sonnet` uses two Claude models." % first
-            )
-        return first
+        return errors[0]
     return "\n".join(lines[-6:]) or "codex produced no output"
+
+
+# -- what duet knows about the account's Codex allowance ---------------------
+#
+# Nothing codex offers reports remaining quota without spending a model call:
+# `codex login status` answers "am I signed in", which is a different question,
+# and the only cheap way to learn the answer is to be told it. So duet does not
+# guess. It remembers the one moment the account itself said the allowance was
+# gone, and it forgets that the moment a turn succeeds.
+
+QUOTA_NOTE = "codex-quota.json"
+
+_RESET_AT = re.compile(r"try again (?:at|on|after)\s+(.+?)\s*$", re.IGNORECASE)
+
+# Parsed by hand rather than with strptime, because `%b` and `%p` read the
+# process locale: on a machine with a non-English LC_TIME, `strptime` would
+# refuse "Oct" and "PM" — and codex prints English whatever the locale is.
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+_STAMP = re.compile(
+    r"^(?P<month>[a-z]{3,9})\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?P<year>\d{4})"
+    r"(?:[\s,]+(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<meridiem>am|pm)?)?$",
+    re.IGNORECASE,
+)
+
+
+def state_dir() -> Path:
+    """Where duet keeps what it has learned about the account, not the project.
+
+    Quota belongs to the ChatGPT account, so it cannot live in one workspace.
+    DUET_STATE_DIR exists so tests never touch the real home directory.
+    """
+    override = os.environ.get("DUET_STATE_DIR")
+    return Path(override).expanduser() if override else Path.home() / ".duet"
+
+
+def parse_reset_at(message: str) -> Optional[float]:
+    """The epoch second codex named as the reset, or None if it named none.
+
+    None is a real answer here: it means "still out of quota, reset unknown",
+    which doctor reports differently from a deadline it can actually check.
+    """
+    match = _RESET_AT.search((message or "").strip().rstrip("."))
+    if not match:
+        return None
+    raw = match.group(1).strip().rstrip(".")
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except (ValueError, OverflowError, OSError):
+        pass
+    stamp = _STAMP.match(raw)
+    if not stamp:
+        return None
+    month = _MONTHS.get(stamp.group("month")[:3].lower())
+    if month is None:
+        return None
+    hour = int(stamp.group("hour") or 0)
+    meridiem = (stamp.group("meridiem") or "").lower()
+    if meridiem == "pm" and hour < 12:
+        hour += 12
+    elif meridiem == "am" and hour == 12:
+        hour = 0
+    try:
+        return datetime(int(stamp.group("year")), month, int(stamp.group("day")),
+                        hour, int(stamp.group("minute") or 0)).timestamp()
+    except (ValueError, OverflowError, OSError):   # a date codex could not mean
+        return None
+
+
+def record_usage_limit(message: str, note_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Write down that the account said it was out of Codex allowance."""
+    note = {
+        "seen_at": time.time(),
+        "message": message,
+        "resets_at": parse_reset_at(message),
+    }
+    directory = note_dir or state_dir()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / QUOTA_NOTE).write_text(json.dumps(note), encoding="utf-8")
+    except OSError:
+        pass                    # a note we cannot write is not worth a crash
+    return note
+
+
+def clear_usage_limit(note_dir: Optional[Path] = None) -> None:
+    """A turn that ran is proof the allowance is back. Forget the note."""
+    try:
+        ((note_dir or state_dir()) / QUOTA_NOTE).unlink()
+    except OSError:
+        pass
+
+
+def read_usage_limit(note_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """The note, if there is one that is still in force; otherwise None.
+
+    A note whose stated reset has passed is deleted rather than reported: it
+    describes a limit that is over, and doctor must not carry it forward.
+    """
+    path = (note_dir or state_dir()) / QUOTA_NOTE
+    try:
+        note = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(note, dict):
+        return None
+    resets_at = note.get("resets_at")
+    if isinstance(resets_at, (int, float)) and resets_at <= time.time():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return None
+    return note
+
+
+def _when(epoch: Any) -> str:
+    try:
+        return datetime.fromtimestamp(float(epoch)).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return "an unknown time"
 
 
 def read_login_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], str]:
@@ -194,11 +351,17 @@ class CodexCliAdapter(Adapter):
 
                 if proc.returncode == 0 and text:
                     self.turns += 1
+                    # A turn that ran is the only cheap proof the allowance is
+                    # there, so it is also the only thing that clears the note.
+                    clear_usage_limit()
                     return AgentReply(
                         text=text,
                         meta={"backend": self.backend, "model": self.model,
                               "used_last_message_file": bool(final)},
                     )
+                limit = usage_limit_line(combined)
+                if limit:
+                    record_usage_limit(limit)
                 last_error = explain_failure(combined) or "codex exited %d" % proc.returncode
             return AgentReply(text="", error=last_error)
         finally:
@@ -233,11 +396,50 @@ class CodexCliAdapter(Adapter):
             )
         logged_in, detail = read_login_status(binary)
         if logged_in is False:
-            return Probe(ok=False, detail="installed but not signed in (%s)" % detail, fix=LOGIN_HINT)
+            return Probe(ok=False, detail="installed but not signed in (%s)" % detail,
+                         fix=LOGIN_HINT, signed_in=False)
         if logged_in is None:
             if detail.startswith("could not run"):
                 return Probe(ok=False, detail="installed at %s, but %s" % (binary, detail),
                              fix=RUNTIME_FIX)
             return Probe(ok=False, detail="could not read the login state: %s" % detail,
                          fix=LOGIN_HINT)
-        return Probe(ok=True, detail="%s (%s)" % (detail, binary))
+
+        # Signed in is not the same as able to run a turn. `codex login status`
+        # answers the first question only, so this is as far as it can honestly
+        # be taken — except where the account has already told us otherwise.
+        note = read_usage_limit()
+        if note:
+            resets_at = note.get("resets_at")
+            seen = _when(note.get("seen_at"))
+            path = state_dir() / QUOTA_NOTE
+            if isinstance(resets_at, (int, float)):
+                return Probe(
+                    ok=False,
+                    signed_in=True,          # so `duet login` does not open a browser
+                    detail="signed in, but out of Codex usage quota until %s "
+                           "(the account said so at %s)" % (_when(resets_at), seen),
+                    fix="wait for %s, upgrade the plan at "
+                        "https://chatgpt.com/explore/plus, or run this pair another "
+                        "way: %s\n    If that reset has already passed, delete %s."
+                        % (_when(resets_at), OTHER_PAIRS, path),
+                )
+            # Unknown is not the same as exhausted, and a hard failure here would
+            # block the one thing that can settle it: the note only ever clears
+            # on a turn that succeeds, and `duet run` refuses on a failed probe.
+            return Probe(
+                ok=True,
+                signed_in=True,
+                detail="%s (%s) — Codex usage quota not checked.\n"
+                       "    duet hit the usage limit at %s and codex named no reset "
+                       "time, so it may still be in force: if the first ChatGPT turn "
+                       "stops again, %s  (clears itself on the next turn that "
+                       "succeeds; or delete %s)"
+                       % (detail, binary, seen, OTHER_PAIRS, path),
+            )
+        return Probe(
+            ok=True,
+            signed_in=True,
+            detail="%s (%s) — Codex usage quota not checked "
+                   "(reading it would cost a model call)" % (detail, binary),
+        )

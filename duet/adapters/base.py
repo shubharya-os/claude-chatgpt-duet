@@ -75,11 +75,19 @@ RUNTIME_FIX = (
 
 @dataclass
 class Probe:
-    """What `duet doctor` reports for one backend."""
+    """What `duet doctor` reports for one backend.
+
+    `signed_in` is separate from `ok` because they are separate questions. A
+    backend can be signed in and still not ready — an exhausted allowance is
+    the case that prompted this — and `duet login` must not answer a quota
+    problem by opening a browser and then reporting "still not signed in".
+    None means the probe could not tell.
+    """
 
     ok: bool
     detail: str
     fix: str = ""
+    signed_in: Optional[bool] = None
 
 
 class Adapter:

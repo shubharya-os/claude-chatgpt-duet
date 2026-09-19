@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `duet doctor` no longer calls the ChatGPT side ready on the strength of a sign-in.
+  An account can be signed in and out of Codex usage allowance at once, and
+  `codex login status` only answers the first question, so the line now says what was
+  actually checked. Quota is not guessed and never probed with a model call: duet
+  records the moment the account itself reports the limit, reports it until the stated
+  reset passes, and forgets it on the first turn that succeeds.
 - `/duet` in Claude Code and Codex, installed by `duet skill install`, carrying the
   conversation you are already in across to both agents as context.
 - `duet resume` — continue an interrupted session instead of starting over, keeping
