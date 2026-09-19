@@ -7,7 +7,8 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-70 tests, no network and no credentials required. `pytest -q` from a clean clone.
+296 tests, no network and no credentials required. `pytest -q` from a clean clone.
+Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
 |---|---|
@@ -489,7 +490,6 @@ differently and catches what you did not.
 
 ## Known gaps
 
-- The full two-agent live session is pending the Claude sign-in described above.
 - Codex session continuity (`codex exec resume --last`) is best-effort. Every prompt
   duet builds is self-contained, so a dropped session costs context, not correctness.
 - Two models can still be wrong together. The double sign-off raises the floor; the
