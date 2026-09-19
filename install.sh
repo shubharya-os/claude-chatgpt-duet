@@ -174,10 +174,10 @@ else
   # can be asked, so say what is left rather than guessing at consent.
   say "Installed. One command left, in a terminal it can ask questions in:"
   say ""
-  say "    $DUET setup"
+  say "    \"$DUET\" setup"
   say ""
   say "It installs the two agent CLIs if missing, signs you in to both (no API"
   say "keys — your Claude and ChatGPT plans), and adds /duet to Claude Code."
   say ""
-  say "Non-interactive? \`$DUET setup --yes\` installs without asking first."
+  say "Non-interactive? \`\"$DUET\" setup --yes\` installs without asking first."
 fi
