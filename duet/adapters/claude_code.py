@@ -37,7 +37,7 @@ INSTALL_HINT = "npm install -g @anthropic-ai/claude-code"
 LOGIN_HINT = "claude auth login   (sign in with your Claude account — no API key needed)"
 
 
-def read_auth_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], str]:
+def read_auth_status(binary, timeout: int = 45) -> Tuple[Optional[bool], str]:
     """(logged_in, description). None means it could not be determined.
 
     `claude auth status` prints JSON and costs nothing, which is the only honest
@@ -45,11 +45,13 @@ def read_auth_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], st
     the binary exists, and that false green is exactly what sends someone into a
     session that fails on its first turn.
     """
+    first = binary[0] if isinstance(binary, (list, tuple)) else binary
     out = ""
-    for env in (None, env_with_sibling_path(binary)):
+    for env in (None, env_with_sibling_path(first)):
         try:
+            argv = list(binary) if isinstance(binary, (list, tuple)) else [binary]
             proc = subprocess.run(
-                [binary, "auth", "status"], capture_output=True, text=True,
+                argv + ["auth", "status"], capture_output=True, text=True,
                 timeout=timeout, env=env,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -80,10 +82,13 @@ class ClaudeCodeAdapter(Adapter):
     backend = "claude-code"
     display = "Claude Code"
     edits_workspace = True
+    npm_package = "@anthropic-ai/claude-code"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.bin = self.which(*DEFAULT_CANDIDATES) or "claude"
+        launch, binary, self.installed_globally = self.resolve_launch(DEFAULT_CANDIDATES)
+        self.bin = binary or launch[0]   # sets launch to one element, then
+        self.launch = launch             # widen it for the npx form
         self.timeout = int(self.config.get("timeout", 1800))
         self.permission_mode = self.config.get("permission_mode", "acceptEdits")
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
@@ -100,7 +105,7 @@ class ClaudeCodeAdapter(Adapter):
         return "edit tools denied (%s)" % ", ".join(self.WRITE_TOOLS)
 
     def _command(self, prompt: str, system: str) -> List[str]:
-        cmd = [self.bin, "-p", prompt, "--output-format", "json"]
+        cmd = list(self.launch) + ["-p", prompt, "--output-format", "json"]
         if self.permission_mode == "bypass":
             cmd.append("--dangerously-skip-permissions")
         elif self.permission_mode:
@@ -208,14 +213,17 @@ class ClaudeCodeAdapter(Adapter):
 
     @classmethod
     def probe(cls, config: Optional[Dict[str, Any]] = None) -> Probe:
-        binary = Adapter.which(*DEFAULT_CANDIDATES)
+        # The probe has to resolve the command the same way a turn does, or
+        # doctor reports "not found" for a CLI that runs perfectly well through
+        # npx — and the two disagree about the same machine.
+        launch, binary, globally = cls.resolve_launch(DEFAULT_CANDIDATES)
         if not binary:
             return Probe(
                 ok=False,
                 detail="`claude` CLI not found",
                 fix="%s   then:  claude auth login" % INSTALL_HINT,
             )
-        logged_in, detail = read_auth_status(binary)
+        logged_in, detail = read_auth_status(launch)
         if logged_in is False:
             return Probe(ok=False, detail="installed but %s" % detail, fix=LOGIN_HINT)
         if logged_in is None:
@@ -226,7 +234,7 @@ class ClaudeCodeAdapter(Adapter):
                 return Probe(ok=False, detail="installed at %s, but %s" % (binary, detail),
                              fix=RUNTIME_FIX)
             try:
-                proc = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30)
+                proc = subprocess.run(list(launch) + ["--version"], capture_output=True, text=True, timeout=30)
             except (OSError, subprocess.SubprocessError) as exc:
                 return Probe(ok=False, detail="found %s but could not run it: %s" % (binary, exc),
                              fix=RUNTIME_FIX)
@@ -244,4 +252,5 @@ class ClaudeCodeAdapter(Adapter):
                 detail="installed, but the login state could not be read (%s)" % detail,
                 fix=LOGIN_HINT,
             )
-        return Probe(ok=True, detail="%s (%s)" % (detail, binary))
+        where = binary if globally else "via npx, nothing installed globally"
+        return Probe(ok=True, detail="%s (%s)" % (detail, where))

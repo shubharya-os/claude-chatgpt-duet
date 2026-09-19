@@ -146,6 +146,47 @@ class Adapter:
     def restore(self, state: Dict[str, Any]) -> None:
         self.session_id = (state or {}).get("session_id")
 
+    # -- launching --------------------------------------------------------
+    npm_package = ""          # set by adapters that ship as an npm CLI
+
+    @property
+    def bin(self) -> str:
+        """The command this adapter runs.
+
+        Assigning to it is how a caller says "run exactly this instead", which
+        is what the tests do with a stub, so it has to rewrite the argv prefix
+        too. Keeping the two as independent attributes meant a test could set
+        one and silently execute the other — and the real CLI.
+        """
+        return getattr(self, "_bin", "")
+
+    @bin.setter
+    def bin(self, value: str) -> None:
+        self._bin = value
+        self.launch = [value]
+
+    @classmethod
+    def resolve_launch(cls, candidates) -> "tuple":
+        """(argv prefix, binary, installed_globally).
+
+        Prefer a real binary on PATH. Falling back to `npx -y <package>` means
+        duet works with nothing installed globally — the sign-in lives in the
+        agent's own config directory, so an npx-run CLI sees the same account —
+        which removes the one step of setup that changes the machine outside
+        duet's own directory.
+        """
+        found = cls.which(*candidates)
+        if found:
+            return [found], found, True
+        npx = cls.which("npx")
+        if npx and cls.npm_package:
+            return [npx, "-y", cls.npm_package], npx, False
+        # Nothing resolved. The bare name is still worth returning so an error
+        # message can say what was looked for, but the binary is reported empty
+        # so a probe can tell "found" from "gave up and guessed".
+        fallback = next((c for c in candidates if c and os.sep not in c), "")
+        return [fallback], "", True
+
     # -- helpers ----------------------------------------------------------
     @staticmethod
     def which(*candidates: str) -> Optional[str]:

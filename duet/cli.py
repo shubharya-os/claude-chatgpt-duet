@@ -763,40 +763,61 @@ def cmd_setup(args: argparse.Namespace) -> int:
     else:
         packages = [AGENT_PACKAGES[name] for name in missing]
         command = "npm install -g %s" % " ".join(packages)
-        print("   missing: %s" % ", ".join(missing))
-        if not Adapter.which("npm"):
-            print(ui.red("   ✗ ") + "npm is not installed, so I cannot install them.")
-            print("     Install Node (which brings npm), then run:")
+        has_npx, has_npm = Adapter.which("npx"), Adapter.which("npm")
+        print("   not installed globally: %s" % ", ".join(missing))
+
+        if not has_npx and not has_npm:
+            print(ui.red("   ✗ ") + "neither npx nor npm is available, so I cannot run them.")
+            print("     Install Node, which brings both, then run:")
             print("       " + ui.bold(command))
             return 1
-        print(ui.dim("   this installs them globally with npm:"))
-        print("       " + ui.bold(command))
-        if not _ask("   run it?", args.yes):
-            print(ui.yellow("   skipped") + " — run that yourself, then `duet setup` again.")
-            return 1
-        code = subprocess.call(command, shell=True)
-        still_missing = _missing_agent_clis()
-        if code == 0 and still_missing:
-            # npm said it worked, and it almost certainly did — into a directory
-            # that is not on this PATH. "Run it yourself and re-run setup" is
-            # the wrong instruction for that: running it again lands in exactly
-            # the same place. Name the directory instead.
-            print(ui.red("   ✗ ") + "npm reported success, but %s is still not on your PATH."
-                  % " or ".join(still_missing))
-            npm_bin = _npm_global_bin()
-            if npm_bin:
-                print("     npm installs global commands into " + ui.bold(npm_bin) + ".")
-                print("     Add it to your shell profile:")
-                print("       " + ui.bold('export PATH="%s:$PATH"' % npm_bin))
+
+        # duet can drive both CLIs through npx, so installing them globally is
+        # a speed choice rather than a requirement — and it is the only step of
+        # setup that changes anything outside duet's own directory.
+        wants_global = True
+        if has_npx:
+            print(ui.green("   ✓ ") + "duet can run them with npx, so this is optional.")
+            print(ui.dim("     A global install makes every turn start faster:"))
+            print("       " + ui.bold(command))
+            wants_global = bool(has_npm) and _ask("   install them globally?", args.yes)
+            if not wants_global:
+                print(ui.dim("   continuing with npx — nothing installed globally."))
+
+        if wants_global:
+            if not has_npm:
+                print(ui.red("   ✗ ") + "npm is not installed, so I cannot install them.")
+                print("     Install Node, then run:  " + ui.bold(command))
+                return 1
+            code = subprocess.call(command, shell=True)
+            still_missing = _missing_agent_clis()
+            if code == 0 and still_missing:
+                # npm said it worked, and almost certainly did — into a
+                # directory that is not on this PATH. "Run it yourself and try
+                # again" is the wrong instruction: it lands in the same place.
+                print(ui.red("   ✗ ") + "npm reported success, but %s is still not on your PATH."
+                      % " or ".join(still_missing))
+                npm_bin = _npm_global_bin()
+                if npm_bin:
+                    print("     npm installs global commands into " + ui.bold(npm_bin) + ".")
+                    print("     Add it to your shell profile:")
+                    print("       " + ui.bold('export PATH="%s:$PATH"' % npm_bin))
+                else:
+                    print("     Run " + ui.bold("npm prefix -g") + " to find where it put them, and")
+                    print("     add that directory's " + ui.bold("bin") + " to your PATH.")
+                if has_npx:
+                    print(ui.dim("     duet will use npx meanwhile, so this is not fatal."))
+                else:
+                    print("     Then run " + ui.bold("duet setup") + " again.")
+                    return 1
+            elif code != 0 or still_missing:
+                if has_npx:
+                    print(ui.yellow("   ! ") + "that did not finish cleanly — continuing with npx.")
+                else:
+                    print(ui.red("   ✗ ") + "that did not finish cleanly. Run it yourself and re-run setup.")
+                    return 1
             else:
-                print("     Run " + ui.bold("npm prefix -g") + " to find where it put them, and add")
-                print("     that directory's " + ui.bold("bin") + " to your PATH.")
-            print("     Then run " + ui.bold("duet setup") + " again.")
-            return 1
-        if code != 0 or still_missing:
-            print(ui.red("   ✗ ") + "that did not finish cleanly. Run it yourself and re-run setup.")
-            return 1
-        print(ui.green("   ✓ ") + "installed")
+                print(ui.green("   ✓ ") + "installed")
 
     # 2 -----------------------------------------------------------------
     heading("sign in to both")

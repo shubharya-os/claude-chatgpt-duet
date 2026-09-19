@@ -826,3 +826,50 @@ def test_a_usage_limit_reaches_the_console_with_its_fix_intact(capsys):
     assert "11:18" in out                             # when it comes back
     assert "claude:opus+claude:sonnet" in out         # and what to do meanwhile
     assert "succeeds" in out                          # the last sentence survives
+
+
+# --- running with nothing installed globally --------------------------------
+
+def test_a_real_binary_is_preferred_over_npx(tmp_path, monkeypatch):
+    binary = fake_bin(tmp_path, "claude", 'echo ok')
+    monkeypatch.setattr("duet.adapters.base.Adapter.which",
+                        staticmethod(lambda *c: binary if "claude" in c else "/usr/bin/npx"))
+    launch, found, globally = ClaudeCodeAdapter.resolve_launch(("claude",))
+    assert launch == [binary] and found == binary and globally is True
+
+
+def test_npx_runs_the_cli_when_nothing_is_installed_globally(monkeypatch):
+    """The global npm install was the one setup step that changes the machine
+    outside duet's own directory. npx removes it: the sign-in lives in the
+    agent's own config, so an npx-run CLI sees the same account."""
+    monkeypatch.setattr("duet.adapters.base.Adapter.which",
+                        staticmethod(lambda *c: "/usr/bin/npx" if "npx" in c else None))
+    launch, found, globally = ClaudeCodeAdapter.resolve_launch(("claude",))
+    assert launch == ["/usr/bin/npx", "-y", "@anthropic-ai/claude-code"]
+    assert globally is False
+    assert found == "/usr/bin/npx"
+
+    launch, _, _ = CodexCliAdapter.resolve_launch(("codex",))
+    assert launch[-1] == "@openai/codex"
+
+
+def test_nothing_found_is_reported_as_nothing_found(monkeypatch):
+    """Returning a bare name as if it had been located made a probe report a
+    missing CLI as present."""
+    monkeypatch.setattr("duet.adapters.base.Adapter.which", staticmethod(lambda *c: None))
+    launch, found, _ = ClaudeCodeAdapter.resolve_launch(("claude",))
+    assert found == ""                 # not "claude"
+    assert launch == ["claude"]        # but the name is kept for the message
+
+    probe = ClaudeCodeAdapter.probe()
+    assert not probe.ok and "not found" in probe.detail
+
+
+def test_setting_bin_rewrites_what_actually_runs(tmp_path):
+    """Assigning to .bin is how a caller says "run exactly this". Keeping the
+    argv prefix as a separate attribute let a test set one and silently execute
+    the other — which meant the real CLI, over the network, in a unit test."""
+    agent = ClaudeCodeAdapter(name="claude", cwd=str(tmp_path))
+    stub = fake_bin(tmp_path, "claude-stub", 'echo "{}"')
+    agent.bin = stub
+    assert agent.launch == [stub]

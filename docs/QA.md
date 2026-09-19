@@ -390,6 +390,34 @@ The two steps that remain after one command are a global npm install and two bro
 sign-ins. Neither can responsibly be removed: the first is a system-wide change worth
 asking about, and OAuth requires a person at a browser. That is the floor, not a gap.
 
+## Removing the last install step
+
+Setup had two steps that needed a human: a global `npm install -g` for the two agent
+CLIs, and two browser sign-ins. The second cannot be automated — OAuth needs a person
+— but the first turned out to be avoidable: `npx -y @anthropic-ai/claude-code` runs
+the CLI with nothing installed globally, and the sign-in lives in the agent's own
+config directory, so an npx-run CLI sees the same account. Verified by probing both
+CLIs through npx with the global binaries hidden.
+
+duet now resolves a launch command rather than a binary path: a real binary when there
+is one, `npx -y <package>` when there is not. Probes resolve it the same way, because
+a doctor that reports "not found" for a CLI that runs perfectly well through npx is
+two answers about one machine.
+
+Three things went wrong while doing it, all caught by the suite:
+
+1. Execution moved to a new attribute while 41 tests still set `.bin`, so those tests
+   silently ran the real CLIs over the network — the suite went from 30 seconds to
+   4 minutes 40 and 22 tests failed. `.bin` is a property now: assigning to it rewrites
+   the argv, so the two cannot drift.
+2. "Nothing found" returned the bare name as though it had been located, and a probe
+   read that as present. It returns an empty binary now, with the name kept only for
+   the error message.
+3. Rewriting the setup branch left the old one in place, so `npm install -g` would
+   have run twice — and flattened a distinction the agents had written: npm exiting 0
+   while the CLI is still missing means it installed somewhere not on PATH, where "run
+   it again" is the wrong advice. Their test caught it.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,

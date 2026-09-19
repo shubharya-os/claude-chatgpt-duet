@@ -217,13 +217,15 @@ def _when(epoch: Any) -> str:
         return "an unknown time"
 
 
-def read_login_status(binary: str, timeout: int = 45) -> Tuple[Optional[bool], str]:
+def read_login_status(binary, timeout: int = 45) -> Tuple[Optional[bool], str]:
     """(logged_in, human description). None means it could not be determined."""
+    first = binary[0] if isinstance(binary, (list, tuple)) else binary
     out = ""
-    for env in (None, env_with_sibling_path(binary)):
+    for env in (None, env_with_sibling_path(first)):
         try:
+            argv = list(binary) if isinstance(binary, (list, tuple)) else [binary]
             proc = subprocess.run(
-                [binary, "login", "status"], capture_output=True, text=True,
+                argv + ["login", "status"], capture_output=True, text=True,
                 timeout=timeout, env=env,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -250,10 +252,13 @@ class CodexCliAdapter(Adapter):
     backend = "codex-cli"
     display = "ChatGPT (Codex)"
     edits_workspace = True
+    npm_package = "@openai/codex"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.bin = self.which(*DEFAULT_CANDIDATES) or "codex"
+        launch, binary, self.installed_globally = self.resolve_launch(DEFAULT_CANDIDATES)
+        self.bin = binary or launch[0]   # sets launch to one element, then
+        self.launch = launch             # widen it for the npx form
         self.timeout = int(self.config.get("timeout", 1800))
         self.sandbox = str(self.config.get("sandbox", "workspace-write"))
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
@@ -271,8 +276,8 @@ class CodexCliAdapter(Adapter):
     def _base(self, last_message_file: str) -> List[str]:
         # --color never keeps ANSI escapes out of anything we parse; -o gives us
         # the agent's final message verbatim instead of scraped from the log.
-        cmd = [
-            self.bin, "exec",
+        cmd = list(self.launch) + [
+            "exec",
             "--skip-git-repo-check",
             "--color", "never",
             "-C", self.cwd,
@@ -387,14 +392,17 @@ class CodexCliAdapter(Adapter):
 
     @classmethod
     def probe(cls, config: Optional[Dict[str, Any]] = None) -> Probe:
-        binary = Adapter.which(*DEFAULT_CANDIDATES)
+        # The probe has to resolve the command the same way a turn does, or
+        # doctor reports "not found" for a CLI that runs perfectly well through
+        # npx — and the two disagree about the same machine.
+        launch, binary, globally = cls.resolve_launch(DEFAULT_CANDIDATES)
         if not binary:
             return Probe(
                 ok=False,
                 detail="`codex` CLI not found",
                 fix="%s   then:  codex login" % INSTALL_HINT,
             )
-        logged_in, detail = read_login_status(binary)
+        logged_in, detail = read_login_status(launch)
         if logged_in is False:
             return Probe(ok=False, detail="installed but not signed in (%s)" % detail,
                          fix=LOGIN_HINT, signed_in=False)
