@@ -376,6 +376,20 @@ Two more from the same round:
 The lesson is the one this project keeps relearning: a clean room is not a machine.
 Four of the bugs in this document came from someone else's PATH.
 
+## The install path, verified every way it can run
+
+| how it runs | result |
+|---|---|
+| `curl … \| sh` with a terminal | runs the whole thing inline and ends on "done." — install, CLI check, both sign-ins, `/duet` in place. Verified under a real pty. |
+| `curl … \| sh` with no controlling tty | installs duet and `/duet`, then names the two steps that need a human. No hang. Verified across every POSIX shell present. |
+| under the author's own broken PATH | finds `/opt/homebrew/bin/python3` after `command -v python3` resolves to an unusable x86 binary |
+| from a wiped machine | virtualenv fallback under PEP 668, `duet --version` good, demo reaches consensus |
+| second run | skill files duet itself wrote are recognised as stale and rewritten; a file the user edited is refused without `--force` |
+
+The two steps that remain after one command are a global npm install and two browser
+sign-ins. Neither can responsibly be removed: the first is a system-wide change worth
+asking about, and OAuth requires a person at a browser. That is the floor, not a gap.
+
 ## Findings from ChatGPT's review of duet
 
 duet's own ChatGPT side was pointed at `consensus.py`, `orchestrator.py`,
