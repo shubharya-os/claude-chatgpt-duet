@@ -184,6 +184,15 @@ weak check — it is the absence of one, wearing the same clothes, and it is pre
 false proof the double sign-off exists to rule out. Go and Cargo gates are wrapped in
 the assertion duet actually makes: at least one test passed.
 
+**Measured, not asserted.** Given "a URL shortener HTTP service … production quality:
+input validation, correct status codes, no crash on any malformed request" in an empty
+directory, `claude:opus+claude:sonnet` reached a double sign-off in **32 minutes, 6
+rounds, 46 tests**. Checked afterwards against the running server rather than its own
+suite: correct status codes on every unhappy path, codes surviving a restart, and 40
+parallel identical POSTs producing exactly one `201` and thirty-nine `200`s. It also
+passes on Python 3.9, which the previous session's artifact did not — the whole run is
+written up, including what the gate still cannot catch, in [docs/QA.md](docs/QA.md).
+
 ### `duet run` — both of them, until they agree
 
 They take turns in your repo: one builds, the other reviews, they argue, they fix. It
