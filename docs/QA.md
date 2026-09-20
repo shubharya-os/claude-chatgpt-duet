@@ -726,6 +726,45 @@ anyway, verified by running it there. One session is not evidence that the task
 change works in general; it is evidence that it worked once, and that the pair is now
 reasoning about the question at all.
 
+## The same brief, twice: what speed actually costs
+
+The identical brief was given to `claude:opus+claude:sonnet` and to
+`claude:sonnet+claude:sonnet`, both from an empty directory.
+
+| | opus + sonnet | sonnet + sonnet |
+|---|---|---|
+| wall clock | 32m 14s | **13m 37s** |
+| rounds | 6 | 4 |
+| criteria in ACCEPTANCE.md | 236 lines | 76 lines |
+| tests | 46 | 24 |
+| implementation | 573 lines | 220 lines |
+| tests pass on 3.12 and 3.9 | yes | yes |
+| 400 / 404 / 405 / `javascript:` rejected | yes | yes |
+| persistence across restart | yes | yes |
+| short codes | 7 random characters | **sequential integers** |
+| same URL posted 40× in parallel | one `201`, thirty-nine `200` | **forty `201`s** |
+| default bind address | `127.0.0.1` | **`0.0.0.0`** |
+| configuration | `--host/--port/--db` | environment variables |
+
+Both reached a double sign-off. Both artefacts work, and every unhappy path I threw
+at them by hand returned the right status code.
+
+**Neither pair broke its own rules.** The sonnet spec says outright: "Same URL
+submitted twice → two *different* codes are acceptable (no deduplication)", and
+lists deduplication under non-goals. It was not a corner cut against the criteria —
+it is a thinner set of criteria, met exactly.
+
+That is the whole lesson, and it is worth being blunt about: **the double sign-off
+guarantees the criteria are met. It does not choose the criteria.** Sequential codes
+are enumerable, so anyone can walk 1, 2, 3 and read every URL in the database; a
+`0.0.0.0` default puts the service on every interface. Neither is a bug — the first
+was decided deliberately, the second was never discussed at all. Nothing in duet
+catches an unstated decision, and the run that took less than half as long is the one
+that stated less.
+
+So "build it in fifteen minutes" is available, and what it buys you is a smaller
+contract. The pair that argued for twice as long argued mostly about step 1.
+
 ## Install paths checked live
 
 | path | result |
