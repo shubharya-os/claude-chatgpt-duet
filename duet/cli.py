@@ -1055,6 +1055,18 @@ def _sessions(root: str) -> List[Path]:
     return sorted([p for p in base.iterdir() if p.is_dir()], key=lambda p: p.name)
 
 
+def _has_any_source(root: str) -> bool:
+    """Is there anything here that a session could be about?"""
+    base = Path(root).expanduser().resolve()
+    if not base.is_dir():
+        return False
+    for path in base.iterdir():
+        if path.name.startswith(".") or path.name == "__pycache__":
+            continue
+        return True
+    return False
+
+
 def cmd_sessions(args: argparse.Namespace) -> int:
     sessions = _sessions(args.root)
     if not sessions:
@@ -1126,7 +1138,15 @@ def cmd_status(args: argparse.Namespace) -> int:
             return 2
     if not sessions:
         print("no sessions yet in %s" % (Path(args.root).resolve() / ".duet" / "sessions"))
-        print(ui.dim("start one with ") + ui.bold('duet run "..."'))
+        # In an empty directory `duet run` is the wrong suggestion: there is
+        # nothing to detect a gate from, which is the case `duet build` exists
+        # for. Pointing at the command that cannot work here is a small lie
+        # told at the moment someone is deciding whether the tool is for them.
+        if build_cmd.has_tests(args.root) or _has_any_source(args.root):
+            print(ui.dim("start one with ") + ui.bold('duet run "..."'))
+        else:
+            print(ui.dim("nothing here yet — start from scratch with "))
+            print("  " + ui.bold('duet build "what you want to build"'))
         return 2
 
     path = sessions[-1]

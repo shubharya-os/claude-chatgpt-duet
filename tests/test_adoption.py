@@ -5,7 +5,7 @@ home directory with a space in it, npm installing into a directory nobody's
 PATH mentions, a second `duet setup` over a first one, and — the one this
 project exists for — a command that prints a tick it has not earned.
 """
-
+import argparse
 import stat
 import subprocess
 import sys
@@ -406,3 +406,23 @@ def test_the_rerun_command_replaces_a_pair_rather_than_repeating_it(monkeypatch)
         # as advice has to be readable as well as correct.
         assert line.count("--pair") == 1
         assert "claude+codex" not in line
+
+
+def test_an_empty_directory_is_pointed_at_build_not_run(tmp_path, capsys):
+    """`duet run` cannot work here: there is nothing to detect a gate from.
+
+    Suggesting it is a small lie told at the exact moment someone is deciding
+    whether the tool is for them.
+    """
+    from duet import cli
+
+    args = argparse.Namespace(root=str(tmp_path), session=None, json=False, quiet=False)
+    cli.cmd_status(args)
+    out = capsys.readouterr().out
+    assert "duet build" in out
+    assert 'duet run "..."' not in out
+
+    (tmp_path / "app.py").write_text("x = 1\n")
+    cli.cmd_status(args)
+    out = capsys.readouterr().out
+    assert 'duet run "..."' in out
