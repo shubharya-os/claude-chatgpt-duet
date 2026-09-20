@@ -78,3 +78,46 @@ def test_the_pair_order_decides_who_moves_first():
     assert cfg.order()[0] == "chatgpt"
     cfg = Config(agents=parse_pair("claude+codex"))
     assert cfg.order()[0] == "claude"
+
+
+def test_two_of_the_same_model_are_still_two_agents():
+    """`claude:sonnet+claude:sonnet` named both of them claude-sonnet.
+
+    Found by running one. The suffix was the model, which distinguishes
+    nothing when both sides ask for the same model, and the collision is not
+    cosmetic: the orchestrator keys adapters by name, so a single adapter
+    served both turns — the "reviewer" was the same session that wrote the
+    code, context intact. Sign-offs are keyed by name too, so the pair could
+    hold only one and `len(signoffs) < len(agents)` was permanently true: the
+    session spent its whole round budget and could never reach consensus.
+    """
+    from duet.config import parse_pair
+
+    for spec in ("claude:sonnet+claude:sonnet", "claude:opus+claude:opus",
+                 "codex+codex", "claude+claude", "claude:opus+claude:sonnet",
+                 "claude+codex"):
+        names = [a.name for a in parse_pair(spec)]
+        assert len(set(names)) == 2, "%s collapsed to %s" % (spec, names)
+
+    # and the model is kept in the name when it is there to keep
+    assert [a.name for a in parse_pair("claude:sonnet+claude:sonnet")] == [
+        "claude-sonnet-1", "claude-sonnet-2"]
+
+
+def test_a_same_model_pair_can_actually_reach_consensus(tmp_path):
+    """The collision made consensus unreachable, so prove it is reachable."""
+    from duet.adapters.mock import MockAdapter, envelope
+    from duet.config import Config, parse_pair
+    from duet.orchestrator import Orchestrator, STATUS_CONSENSUS
+
+    agents = parse_pair("claude:sonnet+claude:sonnet")
+    done = envelope("I would ship this", "DONE", confidence=0.9)
+    cfg = Config(task="t", root=str(tmp_path), agents=agents,
+                 start=agents[0].name, max_rounds=6)
+    orch = Orchestrator(cfg, adapters={
+        a.name: MockAdapter(name=a.name, cwd=str(tmp_path), config={"script": [done, done]})
+        for a in agents
+    })
+    # Two adapters, not one collapsed into the other.
+    assert len(orch.adapters) == 2
+    assert orch.run().status == STATUS_CONSENSUS

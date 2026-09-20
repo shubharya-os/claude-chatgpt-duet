@@ -77,11 +77,22 @@ def parse_pair(spec: str) -> List["AgentSpec"]:
         backend, name = BACKEND_ALIASES[alias]
         agents.append(AgentSpec(name=name, backend=backend, model=model.strip()))
 
-    # Two of the same need telling apart in every transcript and report.
+    # Two of the same need telling apart in every transcript and report — and
+    # the model is only a distinguishing suffix when the models actually
+    # differ. `claude:sonnet+claude:sonnet` named both of them claude-sonnet,
+    # which is not a cosmetic problem: the orchestrator keys its adapters by
+    # name, so one adapter served both turns and the "reviewer" was the same
+    # session that wrote the code, with its context intact. Worse, sign-offs
+    # are a dict keyed by name too, so a pair that can only ever hold one
+    # sign-off could never reach consensus — the session ran its full round
+    # budget and stopped, every time.
     if agents[0].name == agents[1].name:
-        for index, agent in enumerate(agents, start=1):
-            suffix = agent.model.split("/")[-1] if agent.model else str(index)
-            agent.name = "%s-%s" % (agent.name, suffix)
+        for agent in agents:
+            if agent.model:
+                agent.name = "%s-%s" % (agent.name, agent.model.split("/")[-1])
+        if agents[0].name == agents[1].name:
+            for index, agent in enumerate(agents, start=1):
+                agent.name = "%s-%d" % (agent.name, index)
     return agents
 
 

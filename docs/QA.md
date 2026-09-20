@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-329 tests, no network and no credentials required. `pytest -q` from a clean clone.
+331 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -604,6 +604,39 @@ against a `duet verify` brief six commits old and made that its headline. It was
 right about the diff and wrong about the job. The borrowed task now names the
 session and how old it is, which is what makes that catchable by whoever reads
 the output.
+
+## A same-model pair was one agent wearing two names
+
+Found by running `duet build` with `--pair claude:sonnet+claude:sonnet` to time it
+against the opus pair. The session header listed **one** agent:
+
+```
+duet  20260920-211703-34ad
+  claude-sonnet  Claude Code (claude-code, sonnet)
+  order:     claude-sonnet goes first, up to 10 rounds
+```
+
+`parse_pair` disambiguates two of the same by appending the model — which
+distinguishes nothing when both sides asked for the same model. Both were named
+`claude-sonnet`, and neither consequence is cosmetic:
+
+- The orchestrator keys its adapters by name, so **one adapter served both turns**.
+  The reviewer was the same session that wrote the code, with its context intact —
+  the exact opposite of the property duet sells ("a reviewer with no memory of
+  writing the code is a real reviewer").
+- Sign-offs are a dict keyed by name too, so the pair could hold at most one.
+  `len(signoffs) < len(agents)` was permanently true, so **consensus was
+  unreachable**: the session would spend its entire round budget and stop.
+
+The failure was at least in the safe direction — it could not manufacture a false
+sign-off, only fail to finish — but it silently wasted a full session, and
+`codex+codex` is offered in the README's own pair table. Only identical alias *and*
+identical model collided; `claude+claude` and `codex+codex` were already fine
+because the index was used when no model was given.
+
+Both are now named `claude-sonnet-1` and `claude-sonnet-2`, with a test for every
+pair form and one that runs a same-model pair through the orchestrator to
+consensus. Both fail against the old code.
 
 ## Install paths checked live
 
