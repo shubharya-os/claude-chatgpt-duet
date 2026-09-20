@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-313 tests, no network and no credentials required. `pytest -q` from a clean clone.
+325 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -570,6 +570,40 @@ you the gate passed on the machine that ran it and that neither could talk the o
 into ignoring a defect it had found. It does not tell you the criteria were complete.
 Nothing here fixes that, and it is worth saying plainly rather than discovering it in
 someone else's repository.
+
+## duet's review of `duet build`
+
+`duet review --reviewer claude-opus` was pointed at the `duet build` change. Six
+findings: four major, two minor. Five were real.
+
+| finding | real? | what it was |
+|---|---|---|
+| starter gate ignores the language | yes | `duet build "a CLI in Rust"` in an empty directory got a Python gate, turnable green only by building the wrong thing |
+| `go test ./...` is vacuously green | yes | exits 0 printing `[no test files]`, so a Go project one file old signs off with no tests |
+| unittest fallback misses `tests/` | yes | a conventional `tests/` with no `__init__.py` yields zero tests, and the message blamed the pair for not writing any |
+| `why_unusable` splits a quoted path | yes | an interpreter path containing a space made duet refuse to start, over a program called `'/opt/some` |
+| "no gate" printed when config has one | yes | the line exists to be trusted, and contradicted the header two lines later |
+| change implements build, not verify | **no** | it reviewed against a stale task (see below) |
+
+Two of them it could not run itself and said so. Both were checked here rather
+than taken on trust, and the checking changed the answer twice:
+
+- **`go test ./...` on an *empty* module exits 1**, not 0 — the reviewer had that
+  part wrong. It exits 0 as soon as one package exists, which is the case that
+  matters and which arrives in round 1. So the finding stands and the reasoning
+  did not.
+- **Neither repair the reviewer proposed for `tests/` works.** `discover(d,
+  top_level_dir=".")` raises `ImportError: Start directory is not importable` on
+  3.9 and 3.12 alike; unittest requires `__init__.py` and no argument changes
+  that. The gate imports test files by path instead.
+
+The wrong finding is the instructive one. `duet review` with no task argument
+borrows the task from the last session recorded in the workspace, and said only
+"from the last recorded session" — so the reviewer measured a `duet build` change
+against a `duet verify` brief six commits old and made that its headline. It was
+right about the diff and wrong about the job. The borrowed task now names the
+session and how old it is, which is what makes that catchable by whoever reads
+the output.
 
 ## Install paths checked live
 
