@@ -8,6 +8,22 @@
 
 <img src="docs/session.svg" alt="A duet session: Claude Code and ChatGPT taking turns until both sign off" width="760">
 
+> **In one sentence:** AI writes most of the code now, and the same AI decides when
+> it is finished. duet makes two AIs from two different companies work the same task
+> and requires both to approve the identical result before it counts as done.
+>
+> **Why that matters:** an agent grading its own homework will tell you it passed.
+> Two agents that must agree, with your tests run by neither of them, cannot quietly
+> settle for "good enough" — one of them has to be convinced.
+>
+> **Does it work?** It has been used to build four of its own features, and every one
+> of those sessions found real defects in it — including a blocker its own author had
+> shipped one message after declaring the work finished. All of it is written down in
+> [docs/QA.md](docs/QA.md), mistakes included.
+>
+> *duet is a developer tool: it runs in a terminal and drives Claude Code and ChatGPT
+> through your existing subscriptions.*
+
 You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
 what Claude built. Paste it back to ChatGPT. "Looks good, but you missed the error
 case." Paste that into Claude Code. Repeat until you get bored and ship it.
