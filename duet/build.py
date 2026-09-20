@@ -27,6 +27,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -316,6 +317,41 @@ def warn_vacuous_gate(gate: str, mine: bool) -> None:
           + ui.bold("--gate '%s'" % ZERO_TEST_PROOF["go test ./..."]))
 
 
+def summarise(root: str, seconds: float, gate: str) -> None:
+    """What now exists, after a build session agrees.
+
+    `duet run` ends by naming a state digest and a report path, which is the
+    right answer for a change to a project you already know. For a build, the
+    thing you want to see is the project — it did not exist an hour ago, and
+    nobody has a picture of it yet.
+    """
+    base = Path(root).expanduser().resolve()
+    rows = []
+    for path in sorted(base.rglob("*")):
+        parts = path.relative_to(base).parts
+        if not path.is_file() or {".duet", ".git", "__pycache__"} & set(parts):
+            continue
+        try:
+            lines = sum(1 for _ in path.open("r", encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        rows.append(("/".join(parts), lines))
+    if not rows:
+        return
+
+    minutes, secs = divmod(int(seconds), 60)
+    print()
+    print(ui.bold("built in %dm %02ds" % (minutes, secs))
+          + ui.dim("  — %d files, %d lines" % (len(rows), sum(n for _, n in rows))))
+    width = max(len(name) for name, _ in rows)
+    for name, lines in rows[:12]:
+        print("  %-*s  %s" % (width, name, ui.dim("%d lines" % lines)))
+    if len(rows) > 12:
+        print(ui.dim("  ... and %d more" % (len(rows) - 12)))
+    if gate:
+        print(ui.dim("  verified by: ") + gate)
+
+
 def run(args) -> int:
     """`duet build "<idea>"` — a run whose gate exists before the code does."""
     # Imported here, not at module scope: cli imports this module to register
@@ -370,4 +406,8 @@ def run(args) -> int:
     # and the orchestrator itself. Only the task and the gate differ here.
     args.task = [task_for(idea, effective)]
     args.file = None
-    return cli.cmd_run(args)
+    started = time.time()
+    code = cli.cmd_run(args)
+    if code == 0:
+        summarise(root, time.time() - started, effective)
+    return code

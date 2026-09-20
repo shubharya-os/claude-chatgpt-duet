@@ -241,3 +241,26 @@ def test_a_gate_you_chose_yourself_is_a_warning_not_a_refusal(capsys):
     out = capsys.readouterr().out
     assert "yours, so it stands" not in out
     assert "--gate" in out              # duet picked it, so duet offers the way out
+
+
+def test_the_summary_names_what_now_exists(tmp_path, capsys):
+    """A build ends with a project nobody has seen yet, not just a digest."""
+    (tmp_path / "app.py").write_text("print('hi')\n" * 3)
+    (tmp_path / "test_app.py").write_text("def test_ok():\n    assert True\n")
+    (tmp_path / ".duet").mkdir()
+    (tmp_path / ".duet" / "noise.py").write_text("x = 1\n")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "app.pyc").write_bytes(b"\x00\x01")
+
+    build.summarise(str(tmp_path), 125.0, "pytest -q")
+    out = capsys.readouterr().out
+    assert "2m 05s" in out
+    assert "app.py" in out and "test_app.py" in out
+    # duet's own directory is not part of what the pair built
+    assert "noise.py" not in out and ".pyc" not in out
+    assert "pytest -q" in out
+
+
+def test_the_summary_says_nothing_when_nothing_was_built(tmp_path, capsys):
+    build.summarise(str(tmp_path), 10.0, "pytest -q")
+    assert capsys.readouterr().out == ""
