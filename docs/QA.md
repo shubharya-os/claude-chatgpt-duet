@@ -492,18 +492,33 @@ From the session's own event log, unedited:
 | before round 1, nothing in the directory | ran | **1 — red** |
 | after round 1, tests and implementation written | ran | 0 — green |
 
-That is the whole claim: the gate was red *before any code existed*, which is what
-stops a greenfield session being two models agreeing by argument. Opus voted
-CONTINUE rather than DONE on its own first pass, for the stated reason that the
-acceptance criteria had not been ratified by its peer — the step-1 ordering held
-without being enforced by anything but the task text.
+That is the claim: the gate was red *before any code existed*, which is what stops a
+greenfield session being two models agreeing by argument. Opus voted CONTINUE rather
+than DONE on its own first pass, for the stated reason that the criteria had not been
+ratified by its peer — the step-1 ordering held without being enforced by anything
+but the task text.
 
-**The run also found a real defect in duet, which is the reason to run these.** The
-machine's DNS dropped during round 3. `claude -p` prints its own failure to stdout
-and sets `is_error`, so the reply arrived as *non-empty text with an error attached*
-— and the orchestrator's guard only caught failures whose text was empty. The banner
-fell through to `parse_envelope`, which treats prose as CONTINUE. The transcript
-recorded:
+It ran 6 rounds and ended in consensus on `e981453a`. `duet verify` re-ran the gate
+afterwards and the sign-off still held. Two things are worth reading closely.
+
+**A sign-off stopped counting when the workspace moved.** Sonnet signed off at
+`7eadb250` in round 4. Opus then changed a file, which made the state `e981453a`, and
+sonnet's approval no longer applied to what was in the directory — so round 6 had to
+earn it again. That is the whole point of digesting the workspace rather than
+counting votes.
+
+**The last signature was not a rubber stamp.** Round 5 is where duet tells the final
+signer it is the last signature. Opus used it to find a silent-wrongness bug in
+`render()` that both of the earlier reviews had missed, fixed it, and signed off on
+the fix rather than on what it had read.
+
+### The run found a defect in duet, which is the reason to run these
+
+The machine's DNS dropped during round 3. `claude -p` prints its own failure to
+stdout and sets `is_error`, so the reply arrived as *non-empty text with an error
+attached* — and the orchestrator's guard only caught failures whose text was empty.
+The banner fell through to `parse_envelope`, which treats prose as CONTINUE. The
+transcript recorded:
 
 ```
 ## Round 3 — claude-opus (lead) — CONTINUE
@@ -514,8 +529,47 @@ A turn that never happened, written down as a considered verdict. It spent a rou
 skipped the one-failure retry that exists for exactly this, and showed the peer a
 banner as though its partner had said it. Fixed: the reply is parsed first, and a
 failed reply with no parseable envelope is recorded as a turn error. An answer that
-*did* arrive before the backend fell over is still kept — both directions have
-tests, and the first one fails against the old code.
+*did* arrive before the backend fell over is still kept. Both directions have tests,
+and the first fails against the old code.
+
+A second defect was caught before it shipped. The starter gate for a machine with no
+test runner was going to be `python -m unittest discover -q`, which **exits 0 when it
+finds no tests at all** on Python 3.11 and older — and duet supports 3.9. A
+greenfield session would have been handed a green gate on an empty directory: a false
+proof, which is the one thing the double sign-off exists to rule out. Checked on the
+oldest supported interpreter:
+
+```
+$ cd /tmp/empty && python3.9 -m unittest discover -q
+Ran 0 tests in 0.000s
+OK                                    # exit 0 — vacuously green
+
+$ <duet's starter gate, same directory, same interpreter>
+no tests ran: this gate stays red until tests exist
+                                      # exit 1
+```
+
+### What the double sign-off did not catch
+
+The CLI they both signed off on crashes on Python 3.9:
+
+```
+TypeError: function takes at most 1 keyword argument (3 given)
+  File "median.py", line 88, in wide_context
+    return localcontext(prec=..., Emax=..., Emin=...)
+```
+
+`decimal.localcontext` only accepts those keywords from Python 3.11. The gate ran on
+3.12, so it was green every round, and `ACCEPTANCE.md` — 22 criteria, argued over for
+six rounds — never names a Python version. Neither agent was wrong against the
+criteria they agreed. The artifact still violates one of them ("no traceback ever")
+on an interpreter nobody thought to specify.
+
+This is the honest shape of the guarantee. Two models agreeing against a gate tells
+you the gate passed on the machine that ran it and that neither could talk the other
+into ignoring a defect it had found. It does not tell you the criteria were complete.
+Nothing here fixes that, and it is worth saying plainly rather than discovering it in
+someone else's repository.
 
 ## Install paths checked live
 
@@ -532,3 +586,7 @@ tests, and the first one fails against the old code.
   duet builds is self-contained, so a dropped session costs context, not correctness.
 - Two models can still be wrong together. The double sign-off raises the floor; the
   acceptance gate is what keeps it honest.
+- **The gate only proves what it runs.** It runs one command, on one machine, with
+  one interpreter. The greenfield session above ended in consensus on a CLI that
+  crashes on Python 3.9, because the gate ran on 3.12 and the criteria never named a
+  version. Agreement between two models is not coverage.
