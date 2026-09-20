@@ -85,6 +85,14 @@ sign off. You never leave the thread, and you never re-explain anything.
 /duet review      second opinion on the current diff
 ```
 
+Starting a project rather than changing one? `duet build "<idea>"` sets the gate
+**before any code exists**, so it is red from round one — the pair has to agree what
+done means and write the failing tests before they are allowed to build anything.
+
+```bash
+duet build "a CLI that renames photos by the date in their EXIF"
+```
+
 ---
 
 ## `/duet` — the part you actually use
