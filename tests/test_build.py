@@ -275,3 +275,25 @@ def test_the_summary_does_not_count_a_dependency_tree(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "1 files" in out
     assert "vendored.py" not in out
+
+
+def test_json_mode_keeps_stdout_machine_readable(tmp_path, capsys, monkeypatch):
+    """`duet build --json` printed prose above the event stream.
+
+    Anything reading stdout a line at a time hit the gate line before its
+    first JSON object. The lines still exist — they go to stderr.
+    """
+    import argparse
+
+    args = argparse.Namespace(json=True)
+    with build.human_output(args):
+        build.announce("pytest -q", "starter")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "pytest -q" in captured.err
+
+    args.json = False
+    with build.human_output(args):
+        build.announce("pytest -q", "starter")
+    captured = capsys.readouterr()
+    assert "pytest -q" in captured.out

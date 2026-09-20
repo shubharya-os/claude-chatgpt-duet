@@ -22,6 +22,7 @@ is refused rather than used.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import shlex
 import shutil
@@ -358,6 +359,19 @@ def summarise(root: str, seconds: float, gate: str) -> None:
         print(ui.dim("  verified by: ") + gate)
 
 
+def human_output(args):
+    """Send duet's own prose to stderr when stdout is a machine-readable stream.
+
+    `duet build --json` printed the gate line and the closing summary onto
+    stdout ahead of the event stream, so anything reading stdout a line at a
+    time hit prose before its first JSON object. The information is worth
+    keeping, so it moves rather than disappears.
+    """
+    if getattr(args, "json", False):
+        return contextlib.redirect_stdout(sys.stderr)
+    return contextlib.nullcontext()
+
+
 def run(args) -> int:
     """`duet build "<idea>"` — a run whose gate exists before the code does."""
     # Imported here, not at module scope: cli imports this module to register
@@ -400,10 +414,12 @@ def run(args) -> int:
         source = "detected" if found else "starter"
 
     effective = args.gate or configured or ""
-    announce(effective, source)
+    with human_output(args):
+        announce(effective, source)
     if effective and not args.no_gate and gate_proves_nothing(effective, root):
         mine = source in ("starter", "detected")
-        warn_vacuous_gate(effective, mine)
+        with human_output(args):
+            warn_vacuous_gate(effective, mine)
         if mine:
             return 3
 
@@ -415,5 +431,6 @@ def run(args) -> int:
     started = time.time()
     code = cli.cmd_run(args)
     if code == 0:
-        summarise(root, time.time() - started, effective)
+        with human_output(args):
+            summarise(root, time.time() - started, effective)
     return code
