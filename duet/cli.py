@@ -106,6 +106,12 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
             say("     " + ui.dim("running gate: %s" % event.get("command")))
         elif kind == "gate_done":
             say("     " + (ui.green("gate passed") if event.get("ok") else ui.red("gate failed (exit %s)" % event.get("exit_code"))))
+        elif kind == "gate_mutates":
+            say("     " + ui.yellow("! the gate writes into the workspace"))
+            say("     " + ui.dim("  sign-offs are counted against the files as they were before"))
+            say("     " + ui.dim("  it ran, so a gate that changes them can keep the two of them"))
+            say("     " + ui.dim("  from ever agreeing on the same state. Have it clean up, or"))
+            say("     " + ui.dim("  point it at a scratch directory outside the workspace."))
         elif kind == "decision":
             say("  " + ui.yellow("→ %s: %s" % (event.get("decision"), event.get("reason"))))
         elif kind == "arbitration_start":

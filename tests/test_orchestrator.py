@@ -28,6 +28,12 @@ def run(tmp_path, claude_script, gpt_script, **kwargs):
     return orch, orch.run()
 
 
+def event_kinds(result):
+    """Every event kind a session recorded, read back off disk."""
+    path = Path(result.session_dir) / "events.jsonl"
+    return [json.loads(line).get("kind") for line in path.read_text().splitlines() if line.strip()]
+
+
 WRITE = envelope("first pass", "CONTINUE", patches=[{"path": "app.py", "content": "print('hi')\n"}])
 OBJECT = envelope("that is wrong", "CONTINUE",
                   issues=[{"id": "needs-tests", "title": "no tests", "severity": "major",
@@ -678,3 +684,21 @@ def test_commit_makes_no_commit_when_nothing_outside_duet_changed(tmp_path):
     orch, result = run(tmp_path, [DONE], [DONE], max_rounds=6, commit=True)
     assert result.status == "consensus"
     assert git("log", "--oneline").stdout.strip().count("\n") == 0   # still just init
+
+
+def test_a_gate_that_writes_into_the_workspace_is_called_out(tmp_path):
+    """Sign-offs are counted against the files as they were before the gate ran.
+
+    So a gate that writes into the workspace — a test leaving its database
+    behind, a formatter, a build emitting artefacts — moves the state out from
+    under every sign-off the moment it is checked, and the pair can agree
+    forever without agreeing on the same bytes.
+    """
+    _, result = run(tmp_path, [DONE], [DONE], max_rounds=3,
+                    gate="echo left-behind > residue.txt")
+    assert "gate_mutates" in event_kinds(result)
+
+
+def test_a_well_behaved_gate_is_not_called_out(tmp_path):
+    _, result = run(tmp_path, [DONE], [DONE], max_rounds=3, gate="true")
+    assert "gate_mutates" not in event_kinds(result)

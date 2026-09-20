@@ -112,6 +112,8 @@ class Orchestrator:
         self.pending_patch_log: Dict[str, List[str]] = {}
         self.last_envelope: Dict[str, Envelope] = {}
         self._gate_cache: Dict[str, GateResult] = {}
+        # One warning per session is enough; see _check_gate_is_read_only.
+        self._gate_mutation_warned = False
         self.adapters: Dict[str, Adapter] = adapters or {}
         if not self.adapters:
             for spec in config.agents:
@@ -163,7 +165,27 @@ class Orchestrator:
             self._gate_cache[digest] = result
             if self.workspace.gate:
                 self.emit("gate_done", ok=result.ok, exit_code=result.exit_code, digest=digest)
+                self._check_gate_is_read_only(digest)
         return self._gate_cache[digest]
+
+    def _check_gate_is_read_only(self, before: str) -> None:
+        """Say so if running the gate changes the workspace.
+
+        Sign-offs are counted against a digest of the files, and the digest is
+        taken before the gate runs. A gate that writes into the workspace —
+        a test that leaves its database behind, a formatter, a build that
+        emits artefacts — therefore moves the state out from under every
+        sign-off the moment it is checked, and the pair can agree forever
+        without ever agreeing on the same bytes. Worth one warning rather than
+        a session nobody can explain.
+        """
+        if self._gate_mutation_warned:
+            return
+        after = self.workspace.digest()
+        if after == before:
+            return
+        self._gate_mutation_warned = True
+        self.emit("gate_mutates", before=before, after=after)
 
     # -- one turn ---------------------------------------------------------
     def _build_prompt(self, agent: str, round_no: int, directive: str, digest: str) -> str:
