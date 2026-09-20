@@ -171,13 +171,18 @@ duet build "a CLI that renames photos by the date in their EXIF"
 
 The gate is set **before any code exists**, so it starts red, and a red gate blocks both
 sign-offs. The pair has to agree what done means and write the tests first — the order
-is in the task, not left to their judgement. On a machine with no test runner at all it
-falls back to one built from `unittest`, which ships with Python.
+is in the task, not left to their judgement, and the task names the exact gate command
+so they cannot write tests it will not run. If the idea names a language, the gate
+follows it; on a machine with no test runner at all, duet writes one into
+`.duet/gate_unittest.py`, which needs nothing installed.
 
-That fallback refuses to pass an empty directory. `python -m unittest discover` exits 0
-when it finds no tests on Python 3.11 and older, which would hand a greenfield session a
-green gate on nothing at all — the exact false proof the double sign-off exists to rule
-out. So it fails unless at least one test actually ran.
+**Whatever gate is chosen is run once before round one, and refused if it is already
+green.** That check exists because the obvious candidates all pass an empty directory:
+`unittest discover` exits 0 with no tests before Python 3.12, and `go test ./...` exits
+0 printing `[no test files]` for any package without them. A gate like that is not a
+weak check — it is the absence of one, wearing the same clothes, and it is precisely the
+false proof the double sign-off exists to rule out. Go and Cargo gates are wrapped in
+the assertion duet actually makes: at least one test passed.
 
 ### `duet run` — both of them, until they agree
 
