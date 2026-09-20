@@ -16,7 +16,7 @@
 > Two agents that must agree, with your tests run by neither of them, cannot quietly
 > settle for "good enough" — one of them has to be convinced.
 >
-> **Does it work?** It has been used to build four of its own features, and every one
+> **Does it work?** It has been used to build five of its own features, and every one
 > of those sessions found real defects in it — including a blocker its own author had
 > shipped one message after declaring the work finished. All of it is written down in
 > [docs/QA.md](docs/QA.md), mistakes included.
@@ -443,7 +443,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-280 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+313 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q
