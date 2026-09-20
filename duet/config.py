@@ -54,6 +54,33 @@ BACKEND_ALIASES: Dict[str, "tuple"] = {
 DEFAULT_PAIR = "claude+codex"
 
 
+def ensure_distinct_names(agents: List["AgentSpec"]) -> List["AgentSpec"]:
+    """Two agents must never share a name.
+
+    The orchestrator keys adapters by name and the consensus state keys
+    sign-offs by name, so two agents called the same thing are one adapter and
+    one sign-off slot: the reviewer becomes the session that wrote the code,
+    and `len(signoffs) < len(agents)` stays true forever, which makes consensus
+    unreachable. The model is only a useful suffix when the models differ.
+
+    Applied to a loaded config as well as a parsed pair, because a config saved
+    by an earlier version has the colliding names already written down, and
+    nothing would repair them on the way back in.
+    """
+    if len(agents) < 2 or len({a.name for a in agents}) == len(agents):
+        return agents
+    for agent in agents:
+        # Not twice: a name loaded from a saved config already carries the
+        # model, and `claude-sonnet-sonnet-1` helps nobody read a transcript.
+        suffix = agent.model.split("/")[-1] if agent.model else ""
+        if suffix and not agent.name.endswith("-" + suffix):
+            agent.name = "%s-%s" % (agent.name, suffix)
+    if len({a.name for a in agents}) != len(agents):
+        for index, agent in enumerate(agents, start=1):
+            agent.name = "%s-%d" % (agent.name, index)
+    return agents
+
+
 def parse_pair(spec: str) -> List["AgentSpec"]:
     """Turn `claude+codex` — or `codex+claude`, or `claude:opus+claude:sonnet` —
     into two agents. The one on the left takes the first turn.
@@ -77,23 +104,9 @@ def parse_pair(spec: str) -> List["AgentSpec"]:
         backend, name = BACKEND_ALIASES[alias]
         agents.append(AgentSpec(name=name, backend=backend, model=model.strip()))
 
-    # Two of the same need telling apart in every transcript and report — and
-    # the model is only a distinguishing suffix when the models actually
-    # differ. `claude:sonnet+claude:sonnet` named both of them claude-sonnet,
-    # which is not a cosmetic problem: the orchestrator keys its adapters by
-    # name, so one adapter served both turns and the "reviewer" was the same
-    # session that wrote the code, with its context intact. Worse, sign-offs
-    # are a dict keyed by name too, so a pair that can only ever hold one
-    # sign-off could never reach consensus — the session ran its full round
-    # budget and stopped, every time.
-    if agents[0].name == agents[1].name:
-        for agent in agents:
-            if agent.model:
-                agent.name = "%s-%s" % (agent.name, agent.model.split("/")[-1])
-        if agents[0].name == agents[1].name:
-            for index, agent in enumerate(agents, start=1):
-                agent.name = "%s-%d" % (agent.name, index)
-    return agents
+    # Two of the same need telling apart in every transcript and report, and
+    # for the harder reason in ensure_distinct_names.
+    return ensure_distinct_names(agents)
 
 
 @dataclass
@@ -158,7 +171,7 @@ class Config:
         ]
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         cfg = cls(**known)
-        cfg.agents = agents or default_agents()
+        cfg.agents = ensure_distinct_names(agents) if agents else default_agents()
         return cfg
 
 

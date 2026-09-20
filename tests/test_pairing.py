@@ -121,3 +121,25 @@ def test_a_same_model_pair_can_actually_reach_consensus(tmp_path):
     # Two adapters, not one collapsed into the other.
     assert len(orch.adapters) == 2
     assert orch.run().status == STATUS_CONSENSUS
+
+
+def test_a_config_saved_with_colliding_names_is_repaired_on_load(tmp_path):
+    """The parse_pair fix does not reach a config already written to disk.
+
+    `duet init --pair claude:sonnet+claude:sonnet` persisted both agents under
+    one name, and a config is read straight back into AgentSpecs — so the
+    collapse would survive the fix for anyone who had already run it.
+    """
+    import json
+    from duet.config import load_config
+
+    (tmp_path / ".duet").mkdir()
+    (tmp_path / ".duet" / "config.json").write_text(json.dumps({"agents": [
+        {"name": "claude-sonnet", "backend": "claude-code", "model": "sonnet"},
+        {"name": "claude-sonnet", "backend": "claude-code", "model": "sonnet"},
+    ]}))
+
+    names = load_config(str(tmp_path)).agent_names
+    assert names == ["claude-sonnet-1", "claude-sonnet-2"]
+    # not claude-sonnet-sonnet-1: the stored name already carries the model
+    assert "sonnet-sonnet" not in "".join(names)

@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-331 tests, no network and no credentials required. `pytest -q` from a clean clone.
+332 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -637,6 +637,11 @@ because the index was used when no model was given.
 Both are now named `claude-sonnet-1` and `claude-sonnet-2`, with a test for every
 pair form and one that runs a same-model pair through the orchestrator to
 consensus. Both fail against the old code.
+
+Fixing `parse_pair` alone was not enough. `duet init` writes the pair to
+`.duet/config.json`, and a config is read straight back into agents without going
+through the parser — so anyone who had already run init with a same-model pair
+kept the collision, fix or no fix. The repair now runs on load as well.
 
 ## Install paths checked live
 
