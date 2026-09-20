@@ -223,3 +223,21 @@ def test_the_gate_line_is_not_a_lie_when_the_config_supplies_one(capsys):
     out = capsys.readouterr().out
     assert "no gate" not in out
     assert "config.json" in out
+
+
+def test_a_gate_you_chose_yourself_is_a_warning_not_a_refusal(capsys):
+    """duet refuses its own bad choices and warns about yours.
+
+    `has_tests` reads a handful of conventions and will not recognise every
+    layout, so refusing a user's explicit --gate would leave a project whose
+    tests duet cannot see with no way to start a session at all.
+    """
+    build.warn_vacuous_gate("true", mine=False)
+    out = capsys.readouterr().out
+    assert "yours, so it stands" in out
+    assert "--gate" not in out          # nothing to fix; they already chose
+
+    build.warn_vacuous_gate("true", mine=True)
+    out = capsys.readouterr().out
+    assert "yours, so it stands" not in out
+    assert "--gate" in out              # duet picked it, so duet offers the way out

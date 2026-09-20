@@ -286,14 +286,27 @@ def announce(gate: str, source: str) -> None:
         print(ui.dim("         from .duet/config.json."))
 
 
-def refuse_vacuous_gate(gate: str) -> int:
-    print(ui.red("✗ ") + "this gate passes an empty directory, so it cannot hold anything up.")
+def warn_vacuous_gate(gate: str, mine: bool) -> None:
+    """Say a chosen gate proves nothing — and refuse only if duet chose it.
+
+    duet refuses its own bad choices and warns about yours. `has_tests` reads a
+    handful of conventions and will not recognise every layout, so a project
+    whose tests it cannot see would otherwise have no way to start a session at
+    all — a refusal the user cannot argue with is worse than the gate it is
+    protecting them from.
+    """
+    mark = ui.red("✗ ") if mine else ui.yellow("!  ")
+    print(mark + "this gate passes with nothing here that looks like a test.")
     print(ui.dim("  gate: ") + gate)
     print()
     print("  `duet build` is only worth running because the gate is red before the")
     print("  code exists — that is what stops the two of them agreeing on nothing.")
-    print("  This one is green already, with no tests here to have passed.")
+    print("  This one is green already, with nothing here to have passed.")
     print()
+    if not mine:
+        print(ui.dim("  yours, so it stands") + " — but a session that starts green can end")
+        print("  green without a test ever being written.")
+        return
     print(ui.dim("  fix: ") + "give a command that fails when no tests ran, with "
           + ui.bold("--gate"))
     # The example is the wrapper duet uses itself, not an improvised one: an
@@ -301,7 +314,6 @@ def refuse_vacuous_gate(gate: str) -> int:
     # passes anyway, which is the same bug this message is about.
     print(ui.dim("       ") + "e.g. for Go:  "
           + ui.bold("--gate '%s'" % ZERO_TEST_PROOF["go test ./..."]))
-    return 3
 
 
 def run(args) -> int:
@@ -348,7 +360,10 @@ def run(args) -> int:
     effective = args.gate or configured or ""
     announce(effective, source)
     if effective and not args.no_gate and gate_proves_nothing(effective, root):
-        return refuse_vacuous_gate(effective)
+        mine = source in ("starter", "detected")
+        warn_vacuous_gate(effective, mine)
+        if mine:
+            return 3
 
     # cmd_run owns the parts that must not diverge between the two commands:
     # the nested-session guard, the unrunnable-gate check, sign-in preflight,
