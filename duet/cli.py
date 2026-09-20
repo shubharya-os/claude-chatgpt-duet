@@ -272,8 +272,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     if problems:
         for line in problems:
             print(ui.red("✗ ") + line)
-        print("\nfix both sides in one step with " + ui.bold("duet login")
-              + ui.dim("  (or `duet doctor` for the full check)"))
+        # Someone who owns one subscription and not two is not a broken
+        # install, and telling them to sign in to both reads as "go buy the
+        # other one". duet works with either side paired against itself, so
+        # offer that as the command they can actually run.
+        fallback = _same_vendor_fallback(cfg)
+        if fallback:
+            pair, why = fallback
+            print()
+            print(ui.dim("Only have one of the two? ") + why)
+            print("  " + ui.bold(rerun_with_pair(pair)))
+            print(ui.dim("  Two of the same family share more blind spots than two vendors do,"))
+            print(ui.dim("  but the rules that make this work do not depend on them differing."))
+        else:
+            print("\nfix both sides in one step with " + ui.bold("duet login")
+                  + ui.dim("  (or `duet doctor` for the full check)"))
         return 3
 
     orch = Orchestrator(cfg, reporter=make_reporter(cfg.agent_names, verbose=not args.quiet, as_json=args.json))
@@ -315,6 +328,28 @@ def _same_vendor_fallback(cfg: Config):
     if "codex-cli" in usable and "claude-code" not in usable:
         return "codex+codex", "ChatGPT alone can still pair two sessions:"
     return None
+
+
+def rerun_with_pair(pair: str) -> str:
+    """The command the user just typed, with the pair swapped in.
+
+    Advice they have to assemble themselves is advice most people skip. This
+    is the thing they can paste, arguments and all.
+    """
+    out: List[str] = []
+    skip = False
+    for arg in sys.argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if arg == "--pair":
+            skip = True
+            continue
+        if arg.startswith("--pair="):
+            continue
+        out.append(arg)
+    out += ["--pair", pair]
+    return "duet " + " ".join(shlex.quote(a) for a in out)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:

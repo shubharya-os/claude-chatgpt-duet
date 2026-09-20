@@ -381,3 +381,28 @@ def test_a_cli_only_reachable_through_npx_still_counts_as_not_installed(monkeypa
     monkeypatch.setattr("duet.adapters.base.Adapter.which",
                         staticmethod(lambda *c: "/usr/bin/npx" if any(str(x).endswith("npx") for x in c) else None))
     assert _missing_agent_clis() == ["claude", "codex"]
+
+
+def test_the_rerun_command_keeps_the_arguments_you_typed(monkeypatch):
+    from duet import cli
+
+    monkeypatch.setattr(cli.sys, "argv",
+                        ["duet", "build", "a thing with spaces", "-C", "/tmp/x"])
+    line = cli.rerun_with_pair("claude:opus+claude:sonnet")
+    assert line.startswith("duet build ")
+    assert "'a thing with spaces'" in line
+    assert line.endswith("--pair claude:opus+claude:sonnet")
+    assert "-C /tmp/x" in line
+
+
+def test_the_rerun_command_replaces_a_pair_rather_than_repeating_it(monkeypatch):
+    from duet import cli
+
+    for argv in (["duet", "run", "t", "--pair", "claude+codex"],
+                 ["duet", "run", "t", "--pair=claude+codex"]):
+        monkeypatch.setattr(cli.sys, "argv", argv)
+        line = cli.rerun_with_pair("codex+codex")
+        # Two --pair flags and argparse keeps the last, but a command printed
+        # as advice has to be readable as well as correct.
+        assert line.count("--pair") == 1
+        assert "claude+codex" not in line

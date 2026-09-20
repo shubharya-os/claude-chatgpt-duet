@@ -51,6 +51,13 @@ duet setup
 Everything skips whatever is already done, so re-running is safe and is how you
 update.
 
+**Only have one of them?** duet still runs. `--pair claude:opus+claude:sonnet` puts
+two Claude models against each other; `--pair codex+codex` uses two ChatGPT sessions
+with fresh context each. Two vendors is the stronger pair — models from different
+labs fail differently — but nothing in the mechanism depends on it, and when a side
+is missing duet prints the one-subscription command with your own arguments already
+in it.
+
 <details>
 <summary>or with pip, if you would rather not pipe a script to a shell</summary>
 
