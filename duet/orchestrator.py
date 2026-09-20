@@ -644,5 +644,17 @@ class Orchestrator:
             self.session_id,
         )
         self.workspace._git("add", "-A")
+        # `.duet` is duet's own bookkeeping, and the workspace digest excludes
+        # it for that reason — so committing it contradicts duet's own account
+        # of what the workspace is. Left in, a session where the pair changed
+        # nothing produced a commit whose entire content was duet's session
+        # log, under a message claiming both agents had signed off on the work.
+        self.workspace._git("reset", "-q", "--", ".duet")
+        # `git diff --cached --quiet` exits 0 when nothing is staged.
+        staged, _ = self.workspace._git("diff", "--cached", "--quiet")
+        if staged == 0:
+            self.emit("commit", ok=False,
+                      output="nothing to commit: no file changed outside .duet")
+            return
         code, out = self.workspace._git("commit", "-m", message)
         self.emit("commit", ok=code == 0, output=out.strip()[:400])

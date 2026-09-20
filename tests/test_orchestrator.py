@@ -627,3 +627,54 @@ def test_an_answer_that_arrives_despite_a_backend_error_is_kept(tmp_path):
     assert not first.error
     assert first.envelope.verdict == "DONE"
     assert any("backend reported" in n for n in first.envelope.notes)
+
+
+def test_commit_does_not_put_duets_own_logs_in_your_history(tmp_path):
+    """`--commit` staged everything, including .duet.
+
+    The workspace digest excludes .duet because it is duet's bookkeeping, not
+    the work — so committing it contradicts duet's own account of what the
+    workspace is. Worse, a session where the pair changed nothing produced a
+    commit whose entire content was the session log, under a message saying
+    both agents had signed off on the work.
+    """
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=str(tmp_path),
+                              capture_output=True, text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "seed.txt").write_text("seed\n")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+
+    write = envelope("adding the thing", "CONTINUE",
+                     patches=[{"path": "app.py", "content": "print('hi')\n"}])
+    orch, result = run(tmp_path, [write, DONE], [DONE], max_rounds=6, commit=True)
+    assert result.status == "consensus"
+
+    files = git("show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert "app.py" in files
+    assert not [f for f in files if f.startswith(".duet")]
+
+
+def test_commit_makes_no_commit_when_nothing_outside_duet_changed(tmp_path):
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=str(tmp_path),
+                              capture_output=True, text=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "seed.txt").write_text("seed\n")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+
+    orch, result = run(tmp_path, [DONE], [DONE], max_rounds=6, commit=True)
+    assert result.status == "consensus"
+    assert git("log", "--oneline").stdout.strip().count("\n") == 0   # still just init

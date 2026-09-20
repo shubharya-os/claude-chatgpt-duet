@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-332 tests, no network and no credentials required. `pytest -q` from a clean clone.
+334 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -642,6 +642,28 @@ Fixing `parse_pair` alone was not enough. `duet init` writes the pair to
 `.duet/config.json`, and a config is read straight back into agents without going
 through the parser — so anyone who had already run init with a same-model pair
 kept the collision, fix or no fix. The repair now runs on load as well.
+
+## `--commit` was committing duet's own logs
+
+Run for the first time, on a git workspace, with scripted agents. It made a commit:
+
+```
+cae896f duet: make it work
+ .duet/sessions/20260920-214134-11a2/events.jsonl  |   5 +
+ .duet/sessions/20260920-214134-11a2/report.md     |  21 ++++
+ .duet/sessions/20260920-214134-11a2/state.json    | 116 +++++++++++++++
+ .duet/sessions/20260920-214134-11a2/transcript.md |  19 ++++
+```
+
+Every file in it is duet's own bookkeeping, and the message says both agents signed
+off on the work. `git add -A` staged `.duet` along with everything else — the same
+directory the workspace digest deliberately excludes, because it is not the work.
+Anyone running `duet run --commit` on a real repository was getting session logs in
+their history.
+
+`.duet` is now unstaged before the commit, and a session that changed nothing
+outside it makes no commit at all rather than an empty one wearing a sign-off
+message. Both cases have tests; both fail against the old code.
 
 ## Install paths checked live
 
