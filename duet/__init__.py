@@ -1,3 +1,3 @@
 """duet — Claude Code and ChatGPT on the same task, until both sign off."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
