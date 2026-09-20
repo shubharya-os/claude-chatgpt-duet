@@ -16,10 +16,12 @@
 > Two agents that must agree, with your tests run by neither of them, cannot quietly
 > settle for "good enough" — one of them has to be convinced.
 >
-> **Does it work?** It has been used to build five of its own features, and every one
+> **Does it work?** It has been used to build four of its own features, and every one
 > of those sessions found real defects in it — including a blocker its own author had
-> shipped one message after declaring the work finished. All of it is written down in
-> [docs/QA.md](docs/QA.md), mistakes included.
+> shipped one message after declaring the work finished. Its newest command was
+> handed to it for review before shipping: six findings, five of them real, and
+> checking the two it could not run itself proved one of its arguments wrong. All of
+> it is written down in [docs/QA.md](docs/QA.md), mistakes included.
 >
 > *duet is a developer tool: it runs in a terminal and drives Claude Code and ChatGPT
 > through your existing subscriptions.*
