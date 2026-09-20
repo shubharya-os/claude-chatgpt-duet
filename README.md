@@ -452,6 +452,10 @@ can have changed while the session was dead.
 - **Two agents cost roughly twice one agent, times the rounds.** `--rounds` is the
   throttle; the default of 12 is deliberately modest. `duet review` is a single call.
 - duet holds no credentials. Each CLI owns its own sign-in.
+- **duet has no server, and no telemetry.** Your code reaches exactly the vendors whose
+  CLIs you already run — Anthropic through `claude`, OpenAI through `codex` — and no
+  third party is added. [SECURITY.md](SECURITY.md) says precisely what is sent, what
+  runs, what is written to disk, and which risks remain.
 
 ---
 
