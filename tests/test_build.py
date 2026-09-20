@@ -297,3 +297,15 @@ def test_json_mode_keeps_stdout_machine_readable(tmp_path, capsys, monkeypatch):
         build.announce("pytest -q", "starter")
     captured = capsys.readouterr()
     assert "pytest -q" in captured.out
+
+
+def test_the_summary_does_not_claim_a_binary_file_has_lines(tmp_path, capsys):
+    """A SQLite file a test left behind was reported as "7 lines"."""
+    (tmp_path / "app.py").write_text("x = 1\n")
+    (tmp_path / "data.db").write_bytes(b"SQLite format 3\x00" + b"\x00" * 3000)
+    build.summarise(str(tmp_path), 10.0, "")
+    out = capsys.readouterr().out
+    assert "data.db" in out
+    assert "bytes" in out or "KB" in out
+    # two files, but only the text one contributes lines
+    assert "2 files, 1 lines" in out

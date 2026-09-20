@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-337 tests, no network and no credentials required. `pytest -q` from a clean clone.
+338 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -664,6 +664,67 @@ their history.
 `.duet` is now unstaged before the commit, and a session that changed nothing
 outside it makes no commit at all rather than an empty one wearing a sign-off
 message. Both cases have tests; both fail against the old code.
+
+## A production-shaped build, timed
+
+The greenfield test above was a toy. This one was chosen to be app-shaped, and the
+clock was running:
+
+> a URL shortener HTTP service: POST /shorten takes a JSON body, GET /<code>
+> redirects, codes persist across restarts in SQLite, handles concurrent requests
+> safely. Production quality: input validation, correct status codes, no crash on
+> any malformed request.
+
+`claude:opus+claude:sonnet`, empty directory, gate red before round one.
+
+**32 minutes 14 seconds. 6 rounds. Consensus on `d48cfbb8`. 46 tests.**
+
+```
+built in 32m 14s  — 4 files, 1623 lines
+  ACCEPTANCE.md      236 lines
+  README.md           89 lines
+  shortener.py       573 lines
+  test_shortener.py  725 lines
+```
+
+Checked afterwards, not taken on trust — a different interpreter, and the running
+server rather than its own test suite:
+
+| check | result |
+|---|---|
+| 46 tests on 3.12 (the gate's interpreter) | pass |
+| 46 tests on **3.9** | pass |
+| `POST /shorten` | 201 + JSON body |
+| `GET /<code>` | 302 to the original |
+| malformed JSON body | 400 |
+| `javascript:` URL | 400 |
+| unknown code | 404 |
+| `DELETE /shorten` | 405 |
+| restart, then fetch an old code | 302 — persisted |
+| **40 parallel identical POSTs** | **exactly one 201, thirty-nine 200** |
+
+The concurrency result is the one worth pausing on: "the same URL posted twice
+returns the same code, and exactly one request creates it" was a decision opus made
+alone in round 1 and asked its peer to attack. It survived the argument, was encoded
+as a criterion, and holds under real parallel load.
+
+### The 3.9 result is the interesting one
+
+The median CLI from the earlier session crashed on Python 3.9, because its criteria
+never named a version and the gate ran on 3.12. The task text was changed after that
+to require naming the runtime the criteria assume. In this session opus did so in
+round 1, unprompted, and said what its own check could not cover:
+
+> A3 pins the floor at CPython 3.9 and enforces it INSIDE the suite with
+> `ast.parse(src, feature_version=(3,9))` over our own sources, with the honest
+> limit stated: that catches post-3.9 syntax, not post-3.9 stdlib APIs.
+
+Which is exactly the hole the median CLI fell through — `decimal.localcontext` took
+keyword arguments only from 3.11, a stdlib API change, not syntax. So the guard the
+pair built would not have caught the previous failure. The artifact runs on 3.9
+anyway, verified by running it there. One session is not evidence that the task
+change works in general; it is evidence that it worked once, and that the pair is now
+reasoning about the question at all.
 
 ## Install paths checked live
 

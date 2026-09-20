@@ -321,6 +321,25 @@ def warn_vacuous_gate(gate: str, mine: bool) -> None:
           + ui.bold("--gate '%s'" % ZERO_TEST_PROOF["go test ./..."]))
 
 
+def _measure(path: Path):
+    """Lines for a text file, a size for anything else.
+
+    A SQLite file a test left behind was being reported as "7 lines", which is
+    not a small inaccuracy about a real thing — it is a statement about a file
+    that has no lines at all.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(4096)
+        if b"\x00" in head:
+            size = path.stat().st_size
+            return "%d KB" % (size // 1024) if size >= 1024 else "%d bytes" % size
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return sum(1 for _ in handle)
+    except OSError:
+        return 0
+
+
 def summarise(root: str, seconds: float, gate: str) -> None:
     """What now exists, after a build session agrees.
 
@@ -338,21 +357,19 @@ def summarise(root: str, seconds: float, gate: str) -> None:
         # nobody wrote here.
         if not path.is_file() or SKIP_DIRS & set(parts):
             continue
-        try:
-            lines = sum(1 for _ in path.open("r", encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-        rows.append(("/".join(parts), lines))
+        rows.append(("/".join(parts), _measure(path)))
     if not rows:
         return
 
+    lines_total = sum(n for _, n in rows if isinstance(n, int))
     minutes, secs = divmod(int(seconds), 60)
     print()
     print(ui.bold("built in %dm %02ds" % (minutes, secs))
-          + ui.dim("  — %d files, %d lines" % (len(rows), sum(n for _, n in rows))))
+          + ui.dim("  — %d files, %d lines" % (len(rows), lines_total)))
     width = max(len(name) for name, _ in rows)
-    for name, lines in rows[:12]:
-        print("  %-*s  %s" % (width, name, ui.dim("%d lines" % lines)))
+    for name, measure in rows[:12]:
+        shown = "%d lines" % measure if isinstance(measure, int) else measure
+        print("  %-*s  %s" % (width, name, ui.dim(shown)))
     if len(rows) > 12:
         print(ui.dim("  ... and %d more" % (len(rows) - 12)))
     if gate:
