@@ -22,6 +22,18 @@ Both agents take turns in the workspace until they agree. It never ends on one a
 say-so: both must vote DONE on the same workspace state, with no blocking objection open
 and the gate passing.
 
+If the project does not exist yet, use `build` instead of `run`: it sets the gate
+before any code exists, so it starts red, and makes the pair agree the acceptance
+criteria and write the failing tests before they implement anything.
+
+```bash
+{{DUET}} build "a CLI that renames photos by the date in their EXIF"
+```
+
+Use `build` only in a directory that is empty or nearly so. In a project that already
+has tests, `run --gate` is the right command — its real test command is a better gate
+than a starter one.
+
 To have the other model check work that already exists, give it that as the task:
 
 ```bash

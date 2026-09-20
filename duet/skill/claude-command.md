@@ -48,6 +48,14 @@ finding none, say so in your reply: "done" is then only the two of them agreeing
 {{DUET}} run "$ARGUMENTS" --context-file /tmp/duet-context.md
 ```
 
+If the workspace is empty — no source, no tests, nothing to detect — use `build`
+instead. It sets the gate before any code exists, so it starts red, and orders the work:
+acceptance criteria first, failing tests second, implementation third.
+
+```bash
+{{DUET}} build "$ARGUMENTS" --context-file /tmp/duet-context.md
+```
+
 Add `--pair codex+claude` if the user wants ChatGPT to lead. It streams; let it. If it
 is very long the user can open another terminal and run `{{DUET}} status`.
 

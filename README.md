@@ -115,7 +115,7 @@ two of them were wrong.
 
 ---
 
-## The two things it does
+## The three things it does
 
 ### `duet review` — a second opinion, one command
 
@@ -143,6 +143,26 @@ blocking: this change should not ship as it is.
 
 That is a real finding from a real run — exit 1, because something blocking was raised.
 Use it before you push.
+
+### `duet build` — start from nothing, with a gate from round one
+
+An empty directory is where duet's own mechanism used to lapse: there are no tests, so
+nothing is detected, and the header reads `gate: none — they can only agree by
+argument`. That is also where people build fastest and check least.
+
+```bash
+duet build "a CLI that renames photos by the date in their EXIF"
+```
+
+The gate is set **before any code exists**, so it starts red, and a red gate blocks both
+sign-offs. The pair has to agree what done means and write the tests first — the order
+is in the task, not left to their judgement. On a machine with no test runner at all it
+falls back to one built from `unittest`, which ships with Python.
+
+That fallback refuses to pass an empty directory. `python -m unittest discover` exits 0
+when it finds no tests on Python 3.11 and older, which would hand a greenfield session a
+green gate on nothing at all — the exact false proof the double sign-off exists to rule
+out. So it fails unless at least one test actually ran.
 
 ### `duet run` — both of them, until they agree
 
@@ -350,6 +370,7 @@ all, the stall is detected and both are told to break it.
 duet review          # one-shot second opinion on the current diff
 duet review --since main   # ...or on everything this branch adds
 duet run "task"      # the full loop until both sign off
+duet build "idea"    # start a project from nothing, gated from round one
 duet resume          # carry on a session that died, keeping the argument
 duet status          # what is the session doing right now (works mid-run)
 duet verify          # does the last sign-off still hold? re-runs the gate

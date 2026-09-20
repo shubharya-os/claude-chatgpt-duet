@@ -39,6 +39,14 @@ models agreeing.
 {{DUET}} run "$ARGUMENTS" --context-file /tmp/duet-context.md --pair codex+claude
 ```
 
+If the workspace is empty — no source, no tests, nothing to detect — use `build`
+instead. It sets the gate before any code exists, so it starts red, and orders the work:
+acceptance criteria first, failing tests second, implementation third.
+
+```bash
+{{DUET}} build "$ARGUMENTS" --context-file /tmp/duet-context.md --pair codex+claude
+```
+
 `--pair codex+claude` puts you (ChatGPT) in the lead and Claude Code as reviewer, which
 matches the conversation the user is already in. Use `claude+codex` if they would rather
 Claude lead.

@@ -19,6 +19,7 @@ from duet.adapters import REGISTRY
 from duet.adapters import build as build_adapter
 from duet.adapters.base import Adapter
 from duet import gate as gate_detect
+from duet import build as build_cmd
 from duet.config import (
     BACKEND_ALIASES,
     DEFAULT_PAIR,
@@ -239,7 +240,7 @@ def refuse_nested(command: str, args: argparse.Namespace) -> Optional[int]:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    nested = refuse_nested("run", args)
+    nested = refuse_nested(getattr(args, "command", "") or "run", args)
     if nested is not None:
         return nested
     task = read_task(args)
@@ -1997,6 +1998,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--allow-nested", action="store_true",
                        help="permit starting this from inside another duet session")
     p_run.set_defaults(func=cmd_run)
+
+    p_build = sub.add_parser(
+        "build",
+        help="start a project from nothing, with a gate from round one",
+    )
+    p_build.add_argument("idea", nargs="*", help="what to build, in a sentence")
+    common(p_build)
+    p_build.add_argument("--context", help="the conversation this idea came out of")
+    p_build.add_argument("--context-file", metavar="PATH",
+                         help="read that context from a file, or - for stdin")
+    p_build.add_argument("--accept", help="acceptance criteria, in prose")
+    p_build.add_argument("--accept-file", help="read acceptance criteria from a file")
+    p_build.add_argument("--gate", help="the command that decides done "
+                                        "(default: the project's test command, or a starter one)")
+    p_build.add_argument("--no-gate", action="store_true",
+                         help="build without a gate — not advised here, it is the whole point")
+    p_build.add_argument("--rounds", type=int, help="maximum rounds (default 12)")
+    p_build.add_argument("--max-debate", type=int,
+                         help="rounds an issue may stay open before arbitration (default 3)")
+    p_build.add_argument("--pair", metavar="A+B", help="which two agents, and who leads")
+    p_build.add_argument("--start", help="who takes the first turn")
+    p_build.add_argument("--decider", help="who rules on deadlocked issues")
+    p_build.add_argument("--swap", type=int, help="swap lead/reviewer every N rounds (0 = never)")
+    p_build.add_argument("--commit", action="store_true", help="git-commit the result when both sign off")
+    p_build.add_argument("--allow-nested", action="store_true",
+                         help="permit starting this from inside another duet session")
+    p_build.set_defaults(func=build_cmd.run)
 
     p_doctor = sub.add_parser("doctor", help="check that both agents are reachable")
     common(p_doctor)
