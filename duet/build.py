@@ -97,15 +97,24 @@ def task_for(idea: str) -> str:
     return TASK % {"idea": idea.strip()}
 
 
-def announce(gate: str, chosen: bool) -> None:
-    """Say where the gate came from, before the session header prints it."""
+def announce(gate: str, source: str) -> None:
+    """Say where the gate came from, before the session header prints it.
+
+    `source` is "starter" only when nothing existed to detect. Saying "nothing
+    here to test yet" over a project's real test command would be a claim about
+    the workspace that is simply false, and the line exists to be trusted.
+    """
     if not gate:
         print(ui.yellow("!  ") + "no gate: they can only agree by argument.")
         return
-    if chosen:
+    if source == "starter":
         print(ui.dim("   gate  ") + gate)
         print(ui.dim("         nothing here to test yet, so this starts red — "
                      "and a red gate blocks both sign-offs."))
+    elif source == "detected":
+        print(ui.dim("   gate  ") + gate)
+        print(ui.dim("         this project's own test command, found here — "
+                     "not a starter."))
 
 
 def run(args) -> int:
@@ -129,17 +138,18 @@ def run(args) -> int:
 
     root = str(Path(args.root).expanduser().resolve())
     configured = cli.load_config(root).gate
-    chosen = False
+    source = "yours"
     if args.gate is None and not args.no_gate and not configured:
         # detect() first: a project with tests already has a real gate, and a
         # starter would be a worse one. It only falls through on greenfield.
-        args.gate = cli.gate_detect.detect(root) or starter_gate(root)
-        chosen = True
+        found = cli.gate_detect.detect(root)
+        args.gate = found or starter_gate(root)
+        source = "detected" if found else "starter"
 
     # cmd_run owns the parts that must not diverge between the two commands:
     # the nested-session guard, the unrunnable-gate check, sign-in preflight,
     # and the orchestrator itself. Only the task and the gate differ here.
     args.task = [task_for(idea)]
     args.file = None
-    announce(args.gate or "", chosen)
+    announce(args.gate or "", source)
     return cli.cmd_run(args)

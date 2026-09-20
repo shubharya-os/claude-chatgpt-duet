@@ -108,3 +108,22 @@ def test_an_empty_idea_is_refused_before_any_agent_is_started(tmp_path, capsys):
     )
     assert build.run(args) == 2
     assert "no idea given" in capsys.readouterr().out
+
+
+def test_the_gate_line_does_not_claim_an_empty_workspace_when_tests_exist(tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (tmp_path / "test_thing.py").write_text("def test_ok():\n    assert True\n")
+    build.announce("pytest -q", "detected")
+    out = capsys.readouterr().out
+    assert "nothing here to test yet" not in out
+    assert "own test command" in out
+
+
+def test_the_gate_line_says_so_on_a_real_greenfield(capsys):
+    build.announce("pytest -q", "starter")
+    assert "nothing here to test yet" in capsys.readouterr().out
+
+
+def test_no_gate_is_stated_plainly_rather_than_left_silent(capsys):
+    build.announce("", "yours")
+    assert "no gate" in capsys.readouterr().out
