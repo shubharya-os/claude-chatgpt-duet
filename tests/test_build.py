@@ -309,3 +309,15 @@ def test_the_summary_does_not_claim_a_binary_file_has_lines(tmp_path, capsys):
     assert "bytes" in out or "KB" in out
     # two files, but only the text one contributes lines
     assert "2 files, 1 lines" in out
+
+
+def test_the_task_asks_for_the_defaults_that_have_consequences():
+    """A sonnet pair shipped a service on 0.0.0.0 without discussing it.
+
+    Not a decision either agent argued for — one neither mentioned. An
+    unstated default is the one thing neither the gate nor a peer can object
+    to, so the task asks for them out loud.
+    """
+    task = build.task_for("a URL shortener", "pytest -q")
+    assert "binds to" in task
+    assert task.index("binds to") < task.index("THEN BUILD")

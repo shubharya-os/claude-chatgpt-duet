@@ -54,6 +54,12 @@ Work in this order. Do not skip ahead.
    ended in agreement on a CLI that crashed on the older interpreter neither
    agent had thought to name.
 
+   Write down the defaults too, especially the ones with consequences: what it
+   binds to, what it writes and where, what it exposes, what it keeps. Another
+   session shipped a service listening on 0.0.0.0 — not because either agent
+   argued for it, but because neither mentioned it, and an unstated default is
+   the one thing neither the gate nor your peer can object to.
+
 2. WRITE THE TESTS FIRST, and watch them fail. Encode every criterion from
    ACCEPTANCE.md as a test. The gate already runs them, so it is red until
    they exist and pass, and neither of you can sign off while it is red. A
