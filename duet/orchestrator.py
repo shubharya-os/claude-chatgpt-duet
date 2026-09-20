@@ -218,7 +218,15 @@ class Orchestrator:
         self.emit("turn_start", round=round_no, agent=agent, role=role, backend=adapter.backend)
         reply = adapter.send(prompt, system=self._system_prompt(agent, round_no), round_no=round_no)
 
-        if not reply.ok and not reply.text.strip():
+        # Parsed before the failure is judged, because a backend can fail
+        # *after* the agent has answered and that answer is still worth having.
+        # The reverse is what this guards: a CLI's own error banner ("API
+        # Error: Can't reach the API server") is prose, and prose defaults to
+        # CONTINUE — so a turn that never happened was being written down as a
+        # considered verdict, spending the round instead of retrying it.
+        env = parse_envelope(reply.text, agent=agent, round_no=round_no)
+
+        if not reply.ok and not env.parse_ok:
             record = TurnRecord(
                 round=round_no, agent=agent, role=role, envelope=Envelope(agent=agent, round=round_no),
                 digest=digest_before, error=reply.error, meta=reply.meta,
@@ -232,7 +240,6 @@ class Orchestrator:
             self.emit("turn_error", round=round_no, agent=agent, error=reply.error)
             return record
 
-        env = parse_envelope(reply.text, agent=agent, round_no=round_no)
         if reply.error:
             env.notes.append("backend reported: %s" % reply.error)
 

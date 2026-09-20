@@ -564,3 +564,66 @@ def test_session_records_whether_context_crossed(tmp_path):
     start = next(e for e in events if e["kind"] == "session_start")
     assert start["context_chars"] == len("ruled out: requests")
     assert "ruled out" not in json.dumps(start)
+
+
+def test_a_backend_error_banner_is_not_a_verdict(tmp_path):
+    """The failure that started this: an outage recorded as the agent's CONTINUE.
+
+    `claude -p` prints its own error to stdout and sets is_error, so the reply
+    arrives as non-empty text with an error attached. That text is prose, prose
+    defaults to CONTINUE, and a turn that never happened was written into the
+    transcript as a considered verdict — spending a round, and showing the peer
+    a banner as though its partner had said it.
+    """
+    from duet.adapters.base import AgentReply
+
+    banner = "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)"
+
+    class Flaky(MockAdapter):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.calls = 0
+
+        def send(self, prompt, system="", round_no=0):
+            self.calls += 1
+            if self.calls == 1:
+                return AgentReply(text=banner, error=banner)
+            return super().send(prompt, system=system, round_no=round_no)
+
+    cfg = Config(task="t", root=str(tmp_path),
+                 agents=[AgentSpec("claude", "mock"), AgentSpec("gpt", "mock")],
+                 start="claude", max_rounds=6)
+    orch = Orchestrator(cfg, adapters={
+        "claude": Flaky(name="claude", cwd=str(tmp_path), config={"script": [DONE, DONE]}),
+        "gpt": MockAdapter(name="gpt", cwd=str(tmp_path), config={"script": [DONE, DONE]}),
+    })
+    orch.run()
+
+    first = orch.turns[0]
+    assert first.error, "a backend failure must be recorded as one"
+    assert first.envelope.verdict != "CONTINUE" or not first.envelope.message
+    assert banner not in (first.envelope.message or "")
+
+
+def test_an_answer_that_arrives_despite_a_backend_error_is_kept(tmp_path):
+    """The other direction: the CLI can fail after the agent has answered."""
+    from duet.adapters.base import AgentReply
+
+    class LateFailure(MockAdapter):
+        def send(self, prompt, system="", round_no=0):
+            reply = super().send(prompt, system=system, round_no=round_no)
+            return AgentReply(text=reply.text, meta=reply.meta, error="exited 1 after replying")
+
+    cfg = Config(task="t", root=str(tmp_path),
+                 agents=[AgentSpec("claude", "mock"), AgentSpec("gpt", "mock")],
+                 start="claude", max_rounds=6)
+    orch = Orchestrator(cfg, adapters={
+        "claude": LateFailure(name="claude", cwd=str(tmp_path), config={"script": [DONE]}),
+        "gpt": MockAdapter(name="gpt", cwd=str(tmp_path), config={"script": [DONE]}),
+    })
+    orch.run()
+
+    first = orch.turns[0]
+    assert not first.error
+    assert first.envelope.verdict == "DONE"
+    assert any("backend reported" in n for n in first.envelope.notes)

@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-304 tests, no network and no credentials required. `pytest -q` from a clean clone.
+308 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -478,6 +478,44 @@ differently and catches what you did not.
 4. **Symlinks were invisible to the state id.** `tracked_files()` skipped them, so
    retargeting a symlink changed what the project did without changing the id. They
    are now hashed by their target, and never followed.
+
+## Starting from nothing, run live
+
+`duet build` was checked the only way that means anything: on an empty directory,
+with `claude:opus+claude:sonnet`, task "a tiny CLI that takes a list of numbers on
+stdin and prints their median". The point under test was the gate, not the median.
+
+From the session's own event log, unedited:
+
+| when | gate | exit |
+|---|---|---|
+| before round 1, nothing in the directory | ran | **1 — red** |
+| after round 1, tests and implementation written | ran | 0 — green |
+
+That is the whole claim: the gate was red *before any code existed*, which is what
+stops a greenfield session being two models agreeing by argument. Opus voted
+CONTINUE rather than DONE on its own first pass, for the stated reason that the
+acceptance criteria had not been ratified by its peer — the step-1 ordering held
+without being enforced by anything but the task text.
+
+**The run also found a real defect in duet, which is the reason to run these.** The
+machine's DNS dropped during round 3. `claude -p` prints its own failure to stdout
+and sets `is_error`, so the reply arrived as *non-empty text with an error attached*
+— and the orchestrator's guard only caught failures whose text was empty. The banner
+fell through to `parse_envelope`, which treats prose as CONTINUE. The transcript
+recorded:
+
+```
+## Round 3 — claude-opus (lead) — CONTINUE
+API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)
+```
+
+A turn that never happened, written down as a considered verdict. It spent a round,
+skipped the one-failure retry that exists for exactly this, and showed the peer a
+banner as though its partner had said it. Fixed: the reply is parsed first, and a
+failed reply with no parseable envelope is recorded as a turn error. An answer that
+*did* arrive before the backend fell over is still kept — both directions have
+tests, and the first one fails against the old code.
 
 ## Install paths checked live
 
