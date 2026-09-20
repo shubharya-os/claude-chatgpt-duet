@@ -190,8 +190,14 @@ directory, `claude:opus+claude:sonnet` reached a double sign-off in **32 minutes
 rounds, 46 tests**. Checked afterwards against the running server rather than its own
 suite: correct status codes on every unhappy path, codes surviving a restart, and 40
 parallel identical POSTs producing exactly one `201` and thirty-nine `200`s. It also
-passes on Python 3.9, which the previous session's artifact did not — the whole run is
-written up, including what the gate still cannot catch, in [docs/QA.md](docs/QA.md).
+passes on Python 3.9, which the previous session's artifact did not.
+
+The same brief given to `claude:sonnet+claude:sonnet` finished in **13m 37s** — and
+wrote a spec a third the size, with sequential (enumerable) short codes and no URL
+deduplication, both of which its own criteria permit. Neither pair broke its rules.
+The double sign-off guarantees the criteria are met; it does not choose the criteria,
+and the faster run is the one that stated less. Both runs, and what the gate still
+cannot catch, are written up in [docs/QA.md](docs/QA.md).
 
 ### `duet run` — both of them, until they agree
 
