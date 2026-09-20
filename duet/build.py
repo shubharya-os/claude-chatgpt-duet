@@ -147,6 +147,9 @@ sys.exit(0 if ok else 1)
 
 RUNNER_PATH = ".duet/gate_unittest.py"
 
+# Directories that are never part of what the pair built.
+SKIP_DIRS = {".duet", ".git", "__pycache__", "node_modules", ".venv", "venv", ".tox"}
+
 
 # Languages duet can name a test command for, keyed by what the idea says.
 # Deliberately short: a wrong guess here hands the pair a gate their work can
@@ -329,7 +332,10 @@ def summarise(root: str, seconds: float, gate: str) -> None:
     rows = []
     for path in sorted(base.rglob("*")):
         parts = path.relative_to(base).parts
-        if not path.is_file() or {".duet", ".git", "__pycache__"} & set(parts):
+        # Same exclusions the gate runner uses: a project with node_modules
+        # would otherwise be summarised by counting a hundred thousand files
+        # nobody wrote here.
+        if not path.is_file() or SKIP_DIRS & set(parts):
             continue
         try:
             lines = sum(1 for _ in path.open("r", encoding="utf-8", errors="replace"))

@@ -264,3 +264,14 @@ def test_the_summary_names_what_now_exists(tmp_path, capsys):
 def test_the_summary_says_nothing_when_nothing_was_built(tmp_path, capsys):
     build.summarise(str(tmp_path), 10.0, "pytest -q")
     assert capsys.readouterr().out == ""
+
+
+def test_the_summary_does_not_count_a_dependency_tree(tmp_path, capsys):
+    (tmp_path / "app.py").write_text("x = 1\n")
+    for junk in ("node_modules", ".venv"):
+        (tmp_path / junk).mkdir()
+        (tmp_path / junk / "vendored.py").write_text("y = 2\n" * 500)
+    build.summarise(str(tmp_path), 10.0, "")
+    out = capsys.readouterr().out
+    assert "1 files" in out
+    assert "vendored.py" not in out
