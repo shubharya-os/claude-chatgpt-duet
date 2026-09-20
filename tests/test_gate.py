@@ -175,3 +175,20 @@ def test_a_project_local_launcher_is_runnable(tmp_path):
     launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
     assert why_unusable("run-tests.sh", str(tmp_path)) is None
     assert why_unusable("missing.sh", str(tmp_path)) is not None
+
+
+def test_a_quoted_interpreter_path_is_not_mistaken_for_a_missing_program():
+    """`command.split()[0]` breaks on any gate whose program is quoted.
+
+    The greenfield starter shell-quotes sys.executable, so an interpreter at
+    "/opt/some where/python3" yielded the first "word" `'/opt/some`, which is
+    on nobody's PATH — and duet refused to start the session over it.
+    """
+    from duet.gate import _first_word, why_unusable
+
+    assert _first_word("'/opt/some where/python3' -c 'x'") == "/opt/some where/python3"
+    assert _first_word("pytest -q") == "pytest"
+    assert _first_word("") == ""
+    # unbalanced quotes are the shell's problem, not a crash here
+    assert _first_word('pytest "-q') == 'pytest'
+    assert why_unusable("'/bin/sh' -c true", "/tmp") is None

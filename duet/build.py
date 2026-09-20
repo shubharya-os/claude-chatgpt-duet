@@ -10,15 +10,25 @@ before a single test exists. It is red until the pair writes real tests that
 pass, and a red gate blocks both sign-offs. Having nothing to verify against
 becomes the thing that stops them finishing, instead of the thing nobody
 noticed.
+
+The hard part is not choosing a command, it is refusing to choose a *flattering*
+one. Three of the obvious candidates pass an empty directory — `unittest
+discover` before Python 3.12, `go test ./...`, `cargo test` — and a gate that
+goes green on nothing is a false proof, which is the one thing the double
+sign-off exists to rule out. So whatever is chosen is run once before the
+session starts, and a gate that is already green on a workspace with no tests
+is refused rather than used.
 """
 
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from duet import ui
 
@@ -35,11 +45,26 @@ Work in this order. Do not skip ahead.
    Write them to ACCEPTANCE.md. Disagreeing now is cheap; after the code
    exists it is not.
 
+   Name the environment those criteria assume — language runtime and lowest
+   supported version, OS, anything that must already be installed. The gate
+   runs one command, on one machine, with one interpreter, so whatever the
+   criteria leave unstated is what nothing will check. A previous session
+   ended in agreement on a CLI that crashed on the older interpreter neither
+   agent had thought to name.
+
 2. WRITE THE TESTS FIRST, and watch them fail. Encode every criterion from
    ACCEPTANCE.md as a test. The gate already runs them, so it is red until
    they exist and pass, and neither of you can sign off while it is red. A
    test that cannot fail is worse than no test: it looks like proof and is
    not, so check each one fails before you make it pass.
+
+   The gate is exactly this, run from the root of this directory:
+
+       %(gate)s
+
+   Your tests have to be the ones that command runs. If it is the wrong
+   command for what you are building, say so on your first turn — do not
+   quietly build something it cannot see.
 
 3. THEN BUILD, until the gate is green.
 
@@ -50,51 +75,194 @@ The ordinary rules still apply: answer every objection your peer raises, and
 vote DONE only if you would ship exactly what is in the workspace now."""
 
 
-# A gate for a directory with nothing in it yet. `unittest discover` alone is
-# not safe here: on Python 3.11 and older it exits 0 when it finds no tests at
-# all, so an empty workspace would look verified. This refuses to pass until
-# at least one test has actually run.
-EMPTY_SAFE_UNITTEST = (
-    'import unittest as u,sys;'
-    'r=u.TextTestRunner().run(u.defaultTestLoader.discover("."));'
-    'print("" if r.testsRun else "no tests ran: this gate stays red until tests exist");'
-    'sys.exit(0 if r.testsRun and r.wasSuccessful() else 1)'
-)
-
-
-# What to run when the project has no tests yet. Only a runner that is actually
-# installed is offered: a gate that cannot start fails every turn and blocks
-# consensus outright, which is worse than admitting there is no gate.
+# What to run when the project has no tests yet but its shape is recognisable.
+# Only a runner that is actually installed is offered: a gate that cannot start
+# fails every turn and blocks consensus outright, which is worse than admitting
+# there is no gate.
 STARTERS = (
     ("package.json", "npm test"),
     ("Cargo.toml", "cargo test"),
     ("go.mod", "go test ./..."),
 )
 
+# What to call a toolchain in a sentence, when its command name would read oddly.
+TOOL_NAMES = {"npm": "JavaScript or TypeScript", "go": "Go", "cargo": "Rust"}
 
-def starter_gate(root: str) -> Optional[str]:
-    """A test command for a directory that has no tests yet.
 
-    Mirrors the shape of the project when there is one to read, and otherwise
-    assumes Python, because that is what duet can always reach: the interpreter
-    running duet has pytest if duet was installed with it.
+def task_for(idea: str, gate: str) -> str:
+    return TASK % {"idea": idea.strip(), "gate": gate.strip() or "(no gate this session)"}
+
+
+# The gate runner duet writes for a machine with no test runner installed.
+# `unittest discover` cannot see a conventional `tests/` directory unless it
+# holds an `__init__.py` — checked on 3.9 and 3.12, both find zero tests — so
+# the pair would write tests where every Python project puts them and watch the
+# gate stay red while it told them no tests existed. This imports by path
+# instead, which has no such requirement.
+RUNNER = '''"""The acceptance gate for a project that had no test runner.
+
+Written by `duet build`. Runs every test*.py under this directory and fails if
+none of them ran, because a gate that passes an empty workspace proves nothing.
+"""
+
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+
+SKIP = {".duet", ".git", "__pycache__", "node_modules", ".venv", "venv", ".tox"}
+
+root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root))
+
+suite = unittest.TestSuite()
+loader = unittest.defaultTestLoader
+broken = []
+
+for path in sorted(root.rglob("test*.py")):
+    if SKIP & set(path.relative_to(root).parts):
+        continue
+    name = "duet_gate_" + "_".join(path.relative_to(root).with_suffix("").parts)
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    except Exception as exc:                     # a test file that will not import
+        broken.append("%s: %s: %s" % (path.relative_to(root), type(exc).__name__, exc))
+        continue
+    suite.addTests(loader.loadTestsFromModule(module))
+
+result = unittest.TextTestRunner(verbosity=1).run(suite)
+
+for line in broken:
+    print("could not import " + line)
+if not result.testsRun and not broken:
+    print("no tests ran: this gate stays red until tests exist")
+
+ok = result.wasSuccessful() and result.testsRun and not broken
+sys.exit(0 if ok else 1)
+'''
+
+RUNNER_PATH = ".duet/gate_unittest.py"
+
+
+# Languages duet can name a test command for, keyed by what the idea says.
+# Deliberately short: a wrong guess here hands the pair a gate their work can
+# never satisfy, which is worse than the Python default they can argue with.
+LANGUAGES: Tuple[Tuple[str, str, str], ...] = (
+    (r"\brust\b|\bcargo\b", "cargo", "cargo test"),
+    # "go" on its own is an ordinary English word — "a tool to go through
+    # photos" is not a Go project — so it only counts next to something that
+    # makes it a language.
+    (r"\bgolang\b|\bin go\b|\bgo (?:service|cli|tool|program|binary|module|package|app|server)\b",
+     "go", "go test ./..."),
+    # Same for "node", which is a tree node more often than a runtime here.
+    (r"\bnode\.?js\b|\bjavascript\b|\btypescript\b|\bnpm\b",
+     "npm", "npm test"),
+)
+
+
+def language_gate(idea: str) -> Tuple[Optional[str], Optional[str]]:
+    """(command, missing toolchain) for a language the idea names outright.
+
+    Returns (None, None) when the idea names nothing duet knows, which is the
+    common case and means the Python starter is used.
+    """
+    text = (idea or "").lower()
+    for pattern, tool, command in LANGUAGES:
+        if re.search(pattern, text):
+            if shutil.which(tool):
+                return command, None
+            return None, tool
+    return None, None
+
+
+# Commands that report success when they ran no tests at all. `go test ./...`
+# exits 0 printing "[no test files]" for any package without tests — verified
+# here — and `cargo test` exits 0 on "running 0 tests"; cargo's is from its
+# documented output, because the cargo on this machine is the wrong
+# architecture to run. Each is wrapped in the assertion `duet build` actually
+# makes: at least one test passed. The output still reaches both agents
+# through `tee`, so nothing is hidden by the pipe.
+ZERO_TEST_PROOF = {
+    "go test ./...": 'go test ./... 2>&1 | tee /dev/stderr | grep -q "^ok "',
+    "cargo test": 'cargo test 2>&1 | tee /dev/stderr | grep -qE "^test result: ok\\. [1-9]"',
+}
+
+
+def proof_against_zero_tests(command: str) -> str:
+    """The same gate, unable to pass a project that has no tests."""
+    return ZERO_TEST_PROOF.get((command or "").strip(), command)
+
+
+def has_tests(root: str) -> bool:
+    """Does anything here look like a test the gate could be running?"""
+    base = Path(root).expanduser().resolve()
+    if not base.is_dir():
+        return False
+    patterns = ("test_*.py", "*_test.py", "*_test.go", "*.test.js", "*.test.ts",
+                "*_test.rb", "*Test.java", "*_test.rs")
+    for pattern in patterns:
+        for found in base.rglob(pattern):
+            if ".duet" not in found.parts and "node_modules" not in found.parts:
+                return True
+    for name in ("tests", "test", "spec", "__tests__"):
+        directory = base / name
+        if directory.is_dir() and any(directory.iterdir()):
+            return True
+    return False
+
+
+def write_runner(root: str) -> str:
+    """Put the fallback gate script in .duet, and return the command for it.
+
+    `.duet` is excluded from the workspace digest, so the script cannot move
+    the state the two sign-offs are counted against.
     """
     base = Path(root).expanduser().resolve()
+    target = base / RUNNER_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(RUNNER, encoding="utf-8")
+    return "%s %s" % (shlex.quote(sys.executable), RUNNER_PATH)
+
+
+def starter_gate(root: str, idea: str = "") -> Optional[str]:
+    """A test command for a directory that has no tests yet.
+
+    Follows the language the idea names, then the shape of whatever is already
+    on disk, and otherwise assumes Python — the one runner duet can always
+    reach, because it is the interpreter duet is running on.
+    """
+    base = Path(root).expanduser().resolve()
+    named, _missing = language_gate(idea)
+    if named:
+        return named
     for marker, command in STARTERS:
         if (base / marker).is_file() and shutil.which(command.split()[0]):
             return command
     if shutil.which("pytest"):
         return "pytest -q"
-    # unittest ships with Python, so this works on a machine with no test
-    # runner installed at all. It gets its own zero-test guard: `unittest
-    # discover` exits 0 when it finds nothing on Python 3.11 and older, and a
-    # gate that passes an empty directory is the exact false proof this
-    # command exists to prevent.
-    return "%s -c %s" % (shlex.quote(sys.executable), shlex.quote(EMPTY_SAFE_UNITTEST))
+    return write_runner(root)
 
 
-def task_for(idea: str) -> str:
-    return TASK % {"idea": idea.strip()}
+def gate_proves_nothing(gate: str, root: str) -> bool:
+    """Is this gate already green on a workspace with no tests in it?
+
+    `go test ./...` and `cargo test` both exit 0 with no tests to run, and so
+    does `unittest discover` before 3.12. Such a gate is not a weak check, it
+    is the absence of one wearing the same clothes — and `duet build` promises
+    the opposite, that the gate is red until real tests pass. So it is run once
+    before the session starts, rather than trusted.
+    """
+    if not gate or has_tests(root):
+        return False
+    try:
+        proc = subprocess.run(gate, cwd=str(Path(root).expanduser().resolve()),
+                              shell=True, capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return False        # cannot start is a different problem, already checked
+    return proc.returncode == 0
 
 
 def announce(gate: str, source: str) -> None:
@@ -107,14 +275,33 @@ def announce(gate: str, source: str) -> None:
     if not gate:
         print(ui.yellow("!  ") + "no gate: they can only agree by argument.")
         return
+    print(ui.dim("   gate  ") + gate)
     if source == "starter":
-        print(ui.dim("   gate  ") + gate)
         print(ui.dim("         nothing here to test yet, so this starts red — "
                      "and a red gate blocks both sign-offs."))
     elif source == "detected":
-        print(ui.dim("   gate  ") + gate)
         print(ui.dim("         this project's own test command, found here — "
                      "not a starter."))
+    elif source == "configured":
+        print(ui.dim("         from .duet/config.json."))
+
+
+def refuse_vacuous_gate(gate: str) -> int:
+    print(ui.red("✗ ") + "this gate passes an empty directory, so it cannot hold anything up.")
+    print(ui.dim("  gate: ") + gate)
+    print()
+    print("  `duet build` is only worth running because the gate is red before the")
+    print("  code exists — that is what stops the two of them agreeing on nothing.")
+    print("  This one is green already, with no tests here to have passed.")
+    print()
+    print(ui.dim("  fix: ") + "give a command that fails when no tests ran, with "
+          + ui.bold("--gate"))
+    # The example is the wrapper duet uses itself, not an improvised one: an
+    # obvious-looking `grep -qv "no test files"` inverts line by line and
+    # passes anyway, which is the same bug this message is about.
+    print(ui.dim("       ") + "e.g. for Go:  "
+          + ui.bold("--gate '%s'" % ZERO_TEST_PROOF["go test ./..."]))
+    return 3
 
 
 def run(args) -> int:
@@ -138,18 +325,34 @@ def run(args) -> int:
 
     root = str(Path(args.root).expanduser().resolve())
     configured = cli.load_config(root).gate
-    source = "yours"
+    source = "yours" if args.gate else ("configured" if configured else "")
     if args.gate is None and not args.no_gate and not configured:
+        _named, missing = language_gate(idea)
+        if missing:
+            print(ui.red("✗ ") + "that idea says %s, and %s is not installed here."
+                  % (TOOL_NAMES.get(missing, missing), missing))
+            print(ui.dim("  A gate the work cannot satisfy blocks both sign-offs for the"))
+            print(ui.dim("  whole session, so this stops here instead."))
+            print(ui.dim("  fix: ") + "install %s, or pass " % missing + ui.bold("--gate")
+                  + " with a command that does run here")
+            return 3
         # detect() first: a project with tests already has a real gate, and a
         # starter would be a worse one. It only falls through on greenfield.
         found = cli.gate_detect.detect(root)
-        args.gate = found or starter_gate(root)
+        # Wrapped either way: a detected `go test ./...` passes a module with
+        # no tests just as readily as a starter would, and this command's whole
+        # claim is that the gate is red until real tests pass.
+        args.gate = proof_against_zero_tests(found or starter_gate(root, idea))
         source = "detected" if found else "starter"
+
+    effective = args.gate or configured or ""
+    announce(effective, source)
+    if effective and not args.no_gate and gate_proves_nothing(effective, root):
+        return refuse_vacuous_gate(effective)
 
     # cmd_run owns the parts that must not diverge between the two commands:
     # the nested-session guard, the unrunnable-gate check, sign-in preflight,
     # and the orchestrator itself. Only the task and the gate differ here.
-    args.task = [task_for(idea)]
+    args.task = [task_for(idea, effective)]
     args.file = None
-    announce(args.gate or "", source)
     return cli.cmd_run(args)

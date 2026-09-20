@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -67,6 +68,20 @@ def _has_python_tests(root: Path) -> bool:
     return any(root.glob("test_*.py")) or any(root.glob("*_test.py"))
 
 
+def _first_word(command: str) -> str:
+    """The program a shell would actually run, not the first run of characters.
+
+    `command.split()[0]` breaks the moment a path is quoted: a gate built
+    around an interpreter at "/opt/some where/python3" was judged unrunnable
+    and the session refused to start, because the first "word" was `'/opt/some`.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:          # unbalanced quotes; let the shell complain
+        parts = command.split()
+    return parts[0] if parts else ""
+
+
 def _runnable(command: str, root: str) -> bool:
     """Is the first word of this command something that exists?
 
@@ -76,7 +91,7 @@ def _runnable(command: str, root: str) -> bool:
     live session: `pytest -q` was detected on a machine where pytest is only
     inside a virtualenv, so the gate could never pass.
     """
-    first = command.split()[0]
+    first = _first_word(command)
     if shutil.which(first):
         return True
     # A relative launcher like ./gradlew
@@ -160,7 +175,7 @@ def why_unusable(command: str, root: str) -> Optional[str]:
     command = (command or "").strip()
     if not command:
         return None
-    first = command.split()[0]
+    first = _first_word(command)
     if shutil.which(first):
         return None
     candidate = Path(root) / first

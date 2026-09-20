@@ -253,7 +253,11 @@ def test_the_task_falls_back_to_the_last_recorded_session(tmp_path, capsys):
 
     code, data = review_json(root, capsys)
     assert data["task"] == "port the CSV loader to streaming"
-    assert data["task_source"] == "the last recorded session"
+    # Named and dated, not just "the last recorded session". A review that
+    # borrows a stale task judges the change against the wrong brief, and the
+    # only way to catch that is to be told which session it came from.
+    assert data["task_source"].startswith("session 20260101-000000-aaaa")
+    assert "ago)" in data["task_source"]
 
     code, data = review_json(root, capsys, "something else entirely")
     assert data["task"] == "something else entirely"   # the argument wins

@@ -1683,8 +1683,8 @@ def _file_bodies(ws: Any, paths: Sequence[str]) -> Tuple[Dict[str, str], List[st
     return bodies, cut, skipped
 
 
-def _recorded_task(root: str) -> Tuple[str, str]:
-    """The task and acceptance text of the newest session that recorded one."""
+def _recorded_task(root: str) -> Tuple[str, str, str]:
+    """The task, acceptance text and id of the newest session that recorded one."""
     for path in reversed(_sessions(root)):
         data = _session_state(path)
         if not data:
@@ -1692,8 +1692,22 @@ def _recorded_task(root: str) -> Tuple[str, str]:
         cfg_data = data.get("config") or {}
         task = str(cfg_data.get("task") or "").strip()
         if task:
-            return task, str(cfg_data.get("acceptance") or "").strip()
-    return "", ""
+            return task, str(cfg_data.get("acceptance") or "").strip(), path.name
+    return "", "", ""
+
+
+def _age_of(session_id: str) -> str:
+    """ " (3 days ago)" for a session id, or "" if it does not parse."""
+    try:
+        when = time.mktime(time.strptime(session_id[:15], "%Y%m%d-%H%M%S"))
+    except (ValueError, TypeError):
+        return ""
+    seconds = max(0, time.time() - when)
+    if seconds < 3600:
+        return " (%d minutes ago)" % (seconds // 60)
+    if seconds < 86400:
+        return " (%d hours ago)" % (seconds // 3600)
+    return " (%d days ago)" % (seconds // 86400)
 
 
 def _review_task(args: argparse.Namespace, root: str) -> Tuple[str, str, str]:
@@ -1715,9 +1729,13 @@ def _review_task(args: argparse.Namespace, root: str) -> Tuple[str, str, str]:
         return sys.stdin.read().strip(), "", "stdin"
     if text:
         return text, "", "the command line"
-    task, acceptance = _recorded_task(root)
+    task, acceptance, session = _recorded_task(root)
     if task:
-        return task, acceptance, "the last recorded session"
+        # Named, not just described. A review borrowing an old session's task
+        # judges the change against the wrong brief and reports it as the
+        # headline finding — which happened, and cost a whole review. Seeing
+        # which session it came from is what makes that catchable.
+        return task, acceptance, "session %s%s" % (session, _age_of(session))
     return "", "", ""
 
 
