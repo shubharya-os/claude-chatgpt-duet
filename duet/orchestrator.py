@@ -469,6 +469,8 @@ class Orchestrator:
             # Before the first gate runs: the baseline is the workspace as the
             # pair found it. setdefault inside begin() keeps a resumed session's
             # original baseline rather than retaking it from wherever it died.
+            # The gate goes in too — a replay against the baseline runs it.
+            cfg.workflow_state.setdefault("gate", cfg.gate)
             self.workflow.begin(cfg.root, cfg.workflow_state)
 
         status, reason = STATUS_EXHAUSTED, "reached the %d-round limit" % cfg.max_rounds

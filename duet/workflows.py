@@ -20,6 +20,10 @@ declaring done without having done it.
 from __future__ import annotations
 
 import hashlib
+import shutil
+import subprocess
+import tempfile
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -87,6 +91,82 @@ def all_files(root: str) -> Dict[str, str]:
     return found
 
 
+# Directories a project needs in order to run its tests but that are not part
+# of what anyone wrote. A replay links to them rather than copying them.
+DEPENDENCY_DIRS = ("node_modules", ".venv", "venv")
+
+
+def snapshot(root: str, state: Dict) -> None:
+    """Copy the workspace as it was at the start, once per session.
+
+    Kept under .duet, which the digest excludes, in a directory named for this
+    session — a second `duet fix` in the same workspace must not replay
+    against the first one's baseline. On resume the directory already exists
+    and is kept, for the same reason `begin` keeps its baselines.
+    """
+    base = Path(root).expanduser().resolve()
+    existing = state.get("baseline_dir")
+    if existing and (base / existing).is_dir():
+        return
+    rel = ".duet/baselines/%s" % uuid.uuid4().hex[:12]
+    dest = base / rel
+    dest.mkdir(parents=True, exist_ok=True)
+    for path in base.rglob("*"):
+        if not path.is_file():
+            continue
+        r = path.relative_to(base)
+        if SKIP_DIRS & set(r.parts):
+            continue
+        target = dest / r
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copy2(str(path), str(target))
+        except OSError:
+            continue
+    state["baseline_dir"] = rel
+
+
+def replay_fails(root: str, state: Dict) -> Optional[bool]:
+    """Run today's tests against the code as it was at the start.
+
+    True: the tests fail on the original code, so they detect the difference.
+    False: they pass there too, so whatever they test, it is not this change.
+    None: the replay could not be run, and the caller should say so rather
+    than pretend it passed.
+
+    This is a stronger question than "did the gate ever go red": a red caused
+    by a typo in round 2 satisfies that, and a pair that writes the test and
+    the fix in one turn never shows the harness a red at all — which is what
+    the first live `duet fix` did.
+    """
+    base = Path(root).expanduser().resolve()
+    gate = state.get("gate") or ""
+    snap = base / state.get("baseline_dir", "")
+    if not gate or not state.get("baseline_dir") or not snap.is_dir():
+        return None
+    # A replay asks whether the tests tell the two versions apart. With no
+    # tests there is nothing to ask it about, and the gate failing on the old
+    # code would say something about the gate, not about any test.
+    if not test_files(root):
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix="duet-replay-") as tmp:
+            work = Path(tmp) / "w"
+            shutil.copytree(str(snap), str(work))
+            for rel in test_files(root):
+                target = work / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(base / rel), str(target))
+            for name in DEPENDENCY_DIRS:
+                if (base / name).is_dir() and not (work / name).exists():
+                    (work / name).symlink_to(base / name)
+            proc = subprocess.run(gate, cwd=str(work), shell=True,
+                                  capture_output=True, text=True, timeout=900)
+    except (OSError, subprocess.SubprocessError, shutil.Error):
+        return None
+    return proc.returncode != 0
+
+
 class Workflow:
     """A rule the pair is told, and a check that it was followed.
 
@@ -111,29 +191,37 @@ class Workflow:
 
 
 class Fix(Workflow):
-    """A fix counts only once the bug has been seen to fail.
+    """A fix counts only if its tests catch the bug in the original code.
 
-    Checks: some state in this session — the starting one, or one the pair
-    produced — made the gate fail, and the state they signed off on passes it.
-    That is the mechanical form of "reproduce it as a failing test first".
+    Checks: today's tests, run against the code as it was when the session
+    started, FAIL there — so they detect the difference the fix makes — and
+    pass on the fixed code (the gate, as for any sign-off). No test that
+    existed at the start may have been deleted.
 
-    Cannot check: that the red was *this* bug. A test that fails for an
-    unrelated reason satisfies the letter of it. That part is the reviewer's
-    job, and the task tells them so.
+    This is replayed at sign-off, not inferred from history. The first
+    version asked instead whether the gate had ever gone red, and the first
+    live run showed both weaknesses at once: the pair wrote the test and the
+    fix in one turn, so the harness never saw red, and after the veto one of
+    them re-broke the code on purpose to show it. That satisfies a history
+    check. It proves nothing a replay would not prove better.
+
+    Cannot check: that the failure on the original code is *this* bug. A test
+    that imports a helper the fix introduced fails there on the import, not
+    on the bug. The reviewer is told to check exactly that.
     """
 
     name = "fix"
 
     def begin(self, root: str, state: Dict) -> None:
-        state.setdefault("start_digest", "")
+        state.setdefault("baseline_tests", test_files(root))
         state.setdefault("reproduced", False)
-        state.setdefault("had_tests", bool(test_files(root)))
+        state.setdefault("had_tests", bool(state["baseline_tests"]))
+        snapshot(root, state)
 
     def on_gate(self, state: Dict, digest: str, ok: bool) -> None:
+        # Kept as a fallback for when a replay cannot run — see veto().
         if not state.get("start_digest"):
             state["start_digest"] = digest
-            # Red on arrival is reproduction only if there were tests to be
-            # red — a gate failing because nothing ran proves nothing.
             if not ok and state.get("had_tests"):
                 state["reproduced"] = True
             return
@@ -141,40 +229,75 @@ class Fix(Workflow):
             state["reproduced"] = True
 
     def veto(self, root: str, state: Dict) -> Optional[str]:
+        gone = sorted(set(state.get("baseline_tests", {})) - set(test_files(root)))
+        if gone:
+            return (
+                "Tests that existed at the start were deleted: %s. A fix makes a failing "
+                "test pass; it does not remove it. Restore them. Both sign-offs are "
+                "cleared until then." % ", ".join(gone[:6])
+            )
+        replay = replay_fails(root, state)
+        state["replay"] = {True: "fails on original", False: "passes on original",
+                           None: "could not run"}[replay]
+        if replay is True:
+            return None
+        if replay is False:
+            return (
+                "Run against the original, unfixed code, the tests you signed off with "
+                "all PASS — so none of them detects this bug, and the green gate says "
+                "nothing about whether it is fixed. Add a test that fails on the code as "
+                "it was and passes now. You do not need to re-break anything to show it: "
+                "the harness replays your tests against the original itself. Both "
+                "sign-offs are cleared until then."
+            )
         if state.get("reproduced"):
             return None
         return (
-            "No state in this session has made the gate fail, so the bug was never "
-            "reproduced — and a fix for a bug nobody reproduced is a guess that "
-            "happens to leave the tests green. Write a test that fails on the unfixed "
-            "code, let the gate go red on it, then make it pass. Both sign-offs are "
-            "cleared until then."
+            "The harness could not replay your tests against the original code, and "
+            "no state in this session made the gate fail — so there is no evidence "
+            "the bug was ever reproduced. Leave a failing test in place for one turn "
+            "so the gate can see it red, then fix it. Both sign-offs are cleared "
+            "until then."
         )
 
 
 class Add(Workflow):
-    """A feature counts only once a test exercises it.
+    """A feature counts only if a test fails without it.
 
-    Checks: at least one test file was added, or an existing one changed.
+    Checks: a test file was added or changed, and today's tests fail against
+    the code as it was at the start — so something tests behaviour the
+    original did not have. "A test file changed" on its own is satisfied by a
+    whitespace edit.
 
-    Cannot check: that the new test exercises the new feature rather than
-    something else. The reviewer is told to check that.
+    Cannot check: that the failing test exercises *this* feature rather than
+    some other difference. The reviewer is told to check that.
     """
 
     name = "add"
 
     def begin(self, root: str, state: Dict) -> None:
         state.setdefault("baseline_tests", test_files(root))
+        snapshot(root, state)
 
     def veto(self, root: str, state: Dict) -> Optional[str]:
-        if test_files(root) != state.get("baseline_tests", {}):
-            return None
-        return (
-            "No test was added or extended. A feature nothing tests is a claim the "
-            "gate cannot check, which makes it a claim neither of you has verified. "
-            "Add a test that fails without the feature. Both sign-offs are cleared "
-            "until then."
-        )
+        if test_files(root) == state.get("baseline_tests", {}):
+            return (
+                "No test was added or extended. A feature nothing tests is a claim the "
+                "gate cannot check, which makes it a claim neither of you has verified. "
+                "Add a test that fails without the feature. Both sign-offs are cleared "
+                "until then."
+            )
+        replay = replay_fails(root, state)
+        state["replay"] = {True: "fails on original", False: "passes on original",
+                           None: "could not run"}[replay]
+        if replay is False:
+            return (
+                "Run against the code as it was before this feature, your tests all "
+                "still PASS — so nothing tests the feature itself; the tests you added "
+                "would have passed without it. Add one that fails on the original code. "
+                "Both sign-offs are cleared until then."
+            )
+        return None
 
 
 class Refactor(Workflow):

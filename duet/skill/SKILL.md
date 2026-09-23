@@ -34,6 +34,27 @@ Use `build` only in a directory that is empty or nearly so. In a project that al
 has tests, `run --gate` is the right command — its real test command is a better gate
 than a starter one.
 
+**Pick the command by what the user is asking for** — each one holds the pair to a
+rule the harness checks, so the right one matters more than the wording:
+
+| the user wants to… | run | what the harness refuses to accept |
+|---|---|---|
+| build something new in an empty directory | `build` | a gate that is green before any code exists |
+| fix a bug | `fix` | a sign-off before the bug has made the gate fail |
+| add a feature to an existing project | `add` | a sign-off with no new or extended test |
+| restructure without changing behaviour | `refactor` | any edit to an existing test; a suite red at the start |
+| decide how to do something, not do it | `plan` | any change except `PLAN.md` |
+| anything else | `run` | — |
+
+```bash
+{{DUET}} fix "slugify keeps punctuation: 'Hello, World!' gives 'hello,-world!'"
+```
+
+`fix`, `add` and `refactor` need the project's test command; if duet cannot find one,
+it says so and stops, and you should pass `--gate`. Tell the user which rule the
+session was held to when you report back — "both agreed, and the bug was reproduced
+before it was fixed" is a stronger claim than "both agreed".
+
 To have the other model check work that already exists, give it that as the task:
 
 ```bash

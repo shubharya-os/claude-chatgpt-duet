@@ -6,6 +6,7 @@ to count. A plain `duet run` would accept all of them.
 """
 
 import json
+import sys
 from pathlib import Path
 
 from duet import workflows
@@ -78,10 +79,81 @@ def test_a_feature_with_no_test_does_not_count(tmp_path):
     assert "workflow_veto" in kinds(result)
 
 
-def test_a_feature_with_a_new_test_counts(tmp_path):
-    _, result = run(tmp_path, [write("test_feature.py", "def test_x():\n    pass\n")] + [DONE] * 3,
-                    [DONE] * 3, workflow="add", gate="true")
+PYTEST = "%s -m pytest -q -p no:cacheprovider" % sys.executable
+
+
+def test_a_feature_with_a_test_that_fails_without_it_counts(tmp_path):
+    feature = envelope("added double() and its test", "DONE", patches=[
+        {"path": "feature.py", "content": "def double(x):\n    return 2 * x\n"},
+        {"path": "test_feature.py",
+         "content": "from feature import double\n\ndef test_double():\n    assert double(2) == 4\n"},
+    ])
+    _, result = run(tmp_path, [feature] + [DONE] * 3, [DONE] * 3, workflow="add", gate=PYTEST)
     assert result.status == "consensus"
+
+
+def test_a_feature_whose_new_test_would_pass_without_it_does_not_count(tmp_path):
+    """The whitespace-edit loophole: a test changed, but tests nothing new."""
+    (tmp_path / "core.py").write_text("def one():\n    return 1\n")
+    (tmp_path / "test_core.py").write_text("from core import one\n\ndef test_one():\n    assert one() == 1\n")
+    unrelated = envelope("added a feature and a test", "DONE", patches=[
+        {"path": "feature.py", "content": "def two():\n    return 2\n"},
+        {"path": "test_extra.py",   # passes on the original code too
+         "content": "from core import one\n\ndef test_one_again():\n    assert one() == 1\n"},
+    ])
+    _, result = run(tmp_path, [unrelated] + [DONE] * 6, [DONE] * 6, workflow="add", gate=PYTEST)
+    assert result.status != "consensus"
+    assert "workflow_veto" in kinds(result)
+
+
+# -- fix, replayed: the tests have to catch the bug in the original ----------
+
+BUGGY = 'def slugify(text):\n    return "-".join(text.lower().split())\n'
+FIXED = ('import re\n\ndef slugify(text):\n'
+         '    return "-".join(re.sub(r"[^\\w\\s-]", "", text.lower()).split())\n')
+OLD_TEST = 'from slug import slugify\n\ndef test_spaces():\n    assert slugify("a b") == "a-b"\n'
+
+
+def test_a_fix_written_in_one_turn_counts_without_re_breaking_anything(tmp_path):
+    """What the first live `duet fix` did: test and fix together, gate never red.
+
+    The history check vetoed it, and one agent then re-broke working code on
+    purpose to show the harness a red gate. The replay accepts it outright,
+    because the new test fails against the original code by itself.
+    """
+    (tmp_path / "slug.py").write_text(BUGGY)
+    (tmp_path / "test_slug.py").write_text(OLD_TEST)
+    both = envelope("fixed, with a test", "DONE", patches=[
+        {"path": "slug.py", "content": FIXED},
+        {"path": "test_slug.py", "content": OLD_TEST +
+         '\ndef test_punctuation():\n    assert slugify("Hello, World!") == "hello-world"\n'},
+    ])
+    _, result = run(tmp_path, [both] + [DONE] * 3, [DONE] * 3, workflow="fix", gate=PYTEST)
+    assert result.status == "consensus"
+    assert "workflow_veto" not in kinds(result)
+
+
+def test_a_fix_whose_tests_pass_on_the_buggy_code_does_not_count(tmp_path):
+    (tmp_path / "slug.py").write_text(BUGGY)
+    (tmp_path / "test_slug.py").write_text(OLD_TEST)
+    blind = envelope("fixed, with a test that does not look at the bug", "DONE", patches=[
+        {"path": "slug.py", "content": FIXED},
+        {"path": "test_slug.py", "content": OLD_TEST +
+         '\ndef test_lowercase():\n    assert slugify("ABC") == "abc"\n'},
+    ])
+    _, result = run(tmp_path, [blind] + [DONE] * 6, [DONE] * 6, workflow="fix", gate=PYTEST)
+    assert result.status != "consensus"
+    assert "workflow_veto" in kinds(result)
+
+
+def test_a_fix_may_not_delete_the_failing_test(tmp_path):
+    (tmp_path / "slug.py").write_text(BUGGY)
+    (tmp_path / "test_bug.py").write_text(
+        'from slug import slugify\n\ndef test_bug():\n    assert slugify("a,b") == "ab"\n')
+    delete = envelope("removed the failing test", "DONE",
+                      patches=[{"path": "test_bug.py", "action": "delete"}])
+    _, result = run(tmp_path, [delete] + [DONE] * 6, [DONE] * 6, workflow="fix", gate=PYTEST)
+    assert result.status != "consensus"
 
 
 # -- refactor: the yardstick may not move --------------------------------------

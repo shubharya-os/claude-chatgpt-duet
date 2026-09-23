@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-340 tests, no network and no credentials required. `pytest -q` from a clean clone.
+362 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -764,6 +764,73 @@ that stated less.
 
 So "build it in fifteen minutes" is available, and what it buys you is a smaller
 contract. The pair that argued for twice as long argued mostly about step 1.
+
+## Go, run for real
+
+`duet build` picks a Go gate when the idea names Go, and wraps it so zero tests cannot
+pass. Until 2026-09-23 that was verified by unit tests and one hand-run shell command.
+Then a live session: "a Go CLI that reads a CSV file and prints each column's name,
+inferred type, and count of empty cells", `claude:sonnet+claude:sonnet`, empty directory.
+
+**4 minutes 20 seconds, consensus.** The wrapped gate started red. Every promised case
+checked by hand afterwards — quoted fields containing commas, type inference, empty
+counts, missing file, empty file, ragged rows — matched, including ragged long rows,
+whose extra fields `ACCEPTANCE.md` says outright are ignored.
+
+The session never produced the state the wrapper exists for, though — code with no
+tests — because the pair wrote `main.go` and `analyze_test.go` in the same turn and the
+gate only runs between turns. So it was constructed from the real artefact instead:
+
+```
+same code, *_test.go deleted:
+  plain go test ./...           exit 0     [no test files]
+  duet's wrapped gate           exit 1
+```
+
+## Workflows: the first live veto, and what it exposed
+
+`duet fix`, `add`, `refactor` and `plan` each state a rule and check it; see the README.
+Two ran live on the first day, both `claude:sonnet+claude:sonnet`.
+
+**`duet refactor`** — "extract the duplicated name and quantity validation in add_item
+and remove_item into one helper", on a module with a 21-test suite. **1 minute 46
+seconds, 3 rounds, consensus.** The test file's hash afterwards: `be6412659e13d9f7`,
+identical to before. A clean helper, all 21 passing. The rule never had to fire.
+
+**`duet fix`** — a planted bug: `slugify("Hello, World!")` returning `hello,-world!`.
+The first version of `fix` asked whether the gate had ever gone red. What happened:
+
+```
+claude-sonnet-1 DONE  state 8e75764a        test and fix written in one turn
+claude-sonnet-2 DONE  state 8e75764a
+✗ both signed off, but the `fix` rule is not met
+claude-sonnet-1 CONTINUE  state 0b73182d, gate FAILING     re-broke the code on purpose
+claude-sonnet-2 CONTINUE  state 8e75764a                    put the fix back
+...
+BOTH AGENTS SIGNED OFF  both agents signed off on 8e75764a
+```
+
+The veto fired — the first time a workflow rule overruled two agents who had both said
+done. But it overruled a *correct* fix: the pair wrote a failing test and the fix
+together, so the gate only ever saw green. Told why, one agent reintroduced the bug on
+purpose so the harness could see it red, and the pair then signed off on
+**byte-for-byte the state that had been rejected**. The rule was satisfied by ceremony.
+And it was weaker than it looked in the other direction too: a red caused by a typo
+would have satisfied it just as well.
+
+So `fix` now replays instead. At sign-off, the harness copies a snapshot of the original
+workspace, lays today's test files over it, and runs the gate there. The tests must
+fail against the original code and pass on the fixed code. Checked against the real
+artefact from this session:
+
+```
+replay of the pair's actual fix:       fails on original  →  accepted on first sign-off
+replay of a test that misses the bug:  passes on original →  vetoed
+```
+
+`add` got the same replay, because "a test file changed" was satisfied by a whitespace
+edit. Both replay tests fail with replay disabled — they are the two cases only a replay
+can decide.
 
 ## Install paths checked live
 

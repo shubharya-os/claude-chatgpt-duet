@@ -46,6 +46,28 @@ acceptance criteria first, failing tests second, implementation third.
 {{DUET}} build "$ARGUMENTS" --context-file /tmp/duet-context.md --pair codex+claude
 ```
 
+**Pick the command by what the user is asking for** — each one holds the pair to a
+rule the harness checks, so the right one matters more than the wording:
+
+| the user wants to… | run | what the harness refuses to accept |
+|---|---|---|
+| build something new in an empty directory | `build` | a gate that is green before any code exists |
+| fix a bug | `fix` | a sign-off before the bug has made the gate fail |
+| add a feature to an existing project | `add` | a sign-off with no new or extended test |
+| restructure without changing behaviour | `refactor` | any edit to an existing test; a suite red at the start |
+| decide how to do something, not do it | `plan` | any change except `PLAN.md` |
+| anything else | `run` | — |
+
+```bash
+{{DUET}} fix "$ARGUMENTS" --context-file /tmp/duet-context.md --pair codex+claude
+```
+
+`fix`, `add` and `refactor` need the project's test command; if duet cannot find one,
+it says so and stops, and you should pass `--gate`. Tell the user which rule the
+session was held to when you report back — "both agreed, and the bug was reproduced
+before it was fixed" is a stronger claim than "both agreed".
+
+
 `--pair codex+claude` puts you (ChatGPT) in the lead and Claude Code as reviewer, which
 matches the conversation the user is already in. Use `claude+codex` if they would rather
 Claude lead.

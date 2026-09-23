@@ -132,7 +132,7 @@ two of them were wrong.
 
 ---
 
-## The three things it does
+## What it does
 
 ### `duet review` — a second opinion, one command
 
@@ -200,6 +200,40 @@ deduplication, both of which its own criteria permit. Neither pair broke its rul
 The double sign-off guarantees the criteria are met; it does not choose the criteria,
 and the faster run is the one that stated less. Both runs, and what the gate still
 cannot catch, are written up in [docs/QA.md](docs/QA.md).
+
+### `duet fix`, `add`, `refactor`, `plan` — the rule is checked, not asked
+
+Agent workflows are usually prompts: *write a failing test first, don't change
+behaviour, only plan.* The agent is told the rule and trusted to follow it, and an agent
+grading its own work reports that it did. duet has a harness that runs the gate itself
+and a veto over consensus, so each of these states its rule to the pair **and checks it
+against what actually happened**. When both agents sign off and the rule isn't met, the
+sign-offs are cleared and both are told which rule, and why.
+
+| command | the rule | how it is checked |
+|---|---|---|
+| `duet fix "<bug>"` | the tests must catch the bug | today's tests are **replayed against the original code**; they must fail there and pass now. Deleting a test that existed is refused |
+| `duet add "<feature>"` | something must test the feature | a test was added or changed, **and** the tests fail against the code as it was before |
+| `duet refactor "<change>"` | behaviour must not change | every test that existed at the start ends **byte-for-byte unchanged**; refused outright if the suite is red before it starts |
+| `duet plan "<goal>"` | plan, don't build | only `PLAN.md` may change, and it must not be empty |
+
+```bash
+duet fix "slugify('Hello, World!') returns 'hello,-world!' — punctuation should be stripped"
+```
+
+The replay is the part worth explaining. The first version of `fix` asked only whether
+the gate had ever gone red. The first live run beat it twice over: the pair wrote the
+test and the fix in one turn, so the harness never saw red and vetoed a correct fix —
+and one agent then **re-broke working code on purpose** to show it a red gate. The final
+state was byte-identical to the one it had rejected. A replay runs the finished tests
+against a snapshot of the original code instead, so it accepts that fix on the first
+sign-off and rejects the one it should: a "fix" whose tests would have passed on the
+buggy code too.
+
+What each cannot prove is written in [`workflows.py`](duet/workflows.py) beside the
+check. `fix` cannot tell that the failure on the original code is *this* bug rather
+than, say, an import of a helper the fix added; `refactor` cannot see behaviour no test
+covers. The tasks tell the reviewer to check exactly those.
 
 ### `duet run` — both of them, until they agree
 
@@ -408,6 +442,10 @@ duet review          # one-shot second opinion on the current diff
 duet review --since main   # ...or on everything this branch adds
 duet run "task"      # the full loop until both sign off
 duet build "idea"    # start a project from nothing, gated from round one
+duet fix "bug"       # no sign-off until the tests catch the bug in the original code
+duet add "feature"   # no sign-off until a test fails without the feature
+duet refactor "..."  # existing tests may not be edited; refused on a red suite
+duet plan "goal"     # argue out PLAN.md; no code may change
 duet resume          # carry on a session that died, keeping the argument
 duet status          # what is the session doing right now (works mid-run)
 duet verify          # does the last sign-off still hold? re-runs the gate
@@ -469,7 +507,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-340 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+362 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q
