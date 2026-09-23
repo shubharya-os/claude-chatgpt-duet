@@ -962,6 +962,33 @@ What this does not show: it is one app, built once, by one pair. It is not a cla
 that every app comes out like this, and nothing here was load-tested beyond thirty
 concurrent writes.
 
+## Making duet the default, and the same request twice
+
+Before: a fresh Claude Code session, a real bug, the plain request "initials() crashes
+with IndexError when a name has two spaces in a row … Fix it." It fixed the function
+alone — one line — and **added no test**. `test_names.py` was untouched, so nothing
+would notice if the bug came back. duet was never involved; it was only reached for
+when someone typed `/duet` or asked for a second opinion.
+
+`duet skill default` writes one marked block into `~/.claude/CLAUDE.md` (and Codex's
+`AGENTS.md`): fixes, features, refactors, builds and plans go to the matching workflow;
+questions, exploration and one-line edits stay direct. Its always-on cost is about
+**545 tokens**. ECC's was about 41,500.
+
+After: the identical request, in a fresh session, word for word. **It started `duet
+fix` on its own and finished in 6 minutes**, 2 rounds, consensus. Its report named the
+rule and what checking it proved — "of the 8 tests added, six fail against the pre-fix
+version with the reported `IndexError`" — disclosed that the pair was opus + sonnet
+because ChatGPT is out of quota, and passed on the reviewer's objection that one new
+test pinned a side effect of the fix (tabs now count as separators) rather than the bug.
+
+Checked by hand, not relayed: the pair's tests laid over the original `names.py` give
+**7 failed, 2 passed** — six `IndexError`s, and the seventh the side-effect test the
+reviewer named. All 9 pass on the fixed code. The report was right down to the count.
+
+What `-p` mode could not show: whether it announced the session *before* starting, as
+the block asks. Only the final message survives a non-interactive run.
+
 ## Install paths checked live
 
 | path | result |
