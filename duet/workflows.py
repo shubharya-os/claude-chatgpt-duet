@@ -164,7 +164,30 @@ def replay_fails(root: str, state: Dict) -> Optional[bool]:
                                   capture_output=True, text=True, timeout=900)
     except (OSError, subprocess.SubprocessError, shutil.Error):
         return None
-    return proc.returncode != 0
+    failed = proc.returncode != 0
+    state["replay_import_only"] = failed and failed_only_on_imports(
+        (proc.stdout or "") + (proc.stderr or ""))
+    return failed
+
+
+# What a test run looks like when it failed because a test could not even be
+# loaded, as opposed to because a check inside it failed.
+IMPORT_SIGNS = ("ImportError while importing", "ModuleNotFoundError", "cannot import name",
+                "ERROR collecting", "could not import ", "undefined: ", "cannot find value")
+ASSERTION_SIGNS = ("AssertionError", "FAILED ", "FAIL: ", "--- FAIL", "assert ")
+
+
+def failed_only_on_imports(output: str) -> bool:
+    """Did the replay fail only because tests referenced code that did not exist yet?
+
+    Then it proves the tests need the new code, not that they catch the bug —
+    a test importing a helper the fix introduced fails on the original for that
+    reason alone. Not a veto: pytest drops a whole module on one failed import,
+    real checks inside it included, so blocking here would refuse legitimate
+    fixes. It is said, so the person reading the result can check.
+    """
+    return (any(sign in output for sign in IMPORT_SIGNS)
+            and not any(sign in output for sign in ASSERTION_SIGNS))
 
 
 class Workflow:
@@ -215,7 +238,9 @@ class Fix(Workflow):
 
     Cannot check: that the failure on the original code is *this* bug. A test
     that imports a helper the fix introduced fails there on the import, not
-    on the bug. The reviewer is told to check exactly that.
+    on the bug. That case is detected and named in the verdict — not vetoed,
+    since one bad import drops a whole pytest module, real checks included —
+    and the reviewer is told to check it.
     """
 
     name = "fix"
@@ -270,6 +295,10 @@ class Fix(Workflow):
 
 
     def proven(self, state: Dict) -> str:
+        if state.get("replay") == "fails on original" and state.get("replay_import_only"):
+            return ("the tests fail on the original code, but only because they import code "
+                    "the fix added — that proves they need the fix, not that they catch the "
+                    "bug. Check that one exercises it through the original interface")
         if state.get("replay") == "fails on original":
             return "the tests fail on the original code and pass now, so they catch the bug"
         return "the gate failed during the session before it passed (no replay was possible)"

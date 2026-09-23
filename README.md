@@ -16,15 +16,27 @@
 > Two agents that must agree, with your tests run by neither of them, cannot quietly
 > settle for "good enough" — one of them has to be convinced.
 >
-> **Does it work?** It has been used to build four of its own features, and every one
-> of those sessions found real defects in it — including a blocker its own author had
-> shipped one message after declaring the work finished. Its newest command was
-> handed to it for review before shipping: six findings, five of them real, and
-> checking the two it could not run itself proved one of its arguments wrong. All of
-> it is written down in [docs/QA.md](docs/QA.md), mistakes included.
+> **Does it work?** Given one sentence and an empty directory, it built an expense-tracker
+> web app — single-page UI, JSON API, SQLite, CSV export — in **35 minutes**. Then it was
+> attacked by hand, in a real browser as well as over HTTP: SQL injection stored as plain
+> text, stored XSS rendered harmless, CSV formula injection defused, `0.1 + 0.2` totalled
+> to exactly `0.30`. Every run is written down in [docs/QA.md](docs/QA.md) — including the
+> ones where both agents agreed on something broken, and what caught it.
 >
 > *duet is a developer tool: it runs in a terminal and drives Claude Code and ChatGPT
 > through your existing subscriptions.*
+
+```bash
+duet build "an expense tracker web app"      # from nothing: criteria, then tests, then code
+duet fix "export drops rows with commas"     # its tests must fail on the original code
+duet add "a --json flag on report"           # a test must fail without the feature
+duet refactor "split parser.py in two"       # existing tests may not change by a byte
+duet plan "move storage to Postgres"         # both argue it out; only PLAN.md may change
+duet review                                  # a second model reads your diff, read-only
+```
+
+Each one states a rule and **checks it** against what actually happened — the gate the
+harness ran, the files on disk — rather than asking the agents whether they followed it.
 
 You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
 what Claude built. Paste it back to ChatGPT. "Looks good, but you missed the error
@@ -239,9 +251,10 @@ sign-off and rejects the one it should: a "fix" whose tests would have passed on
 buggy code too.
 
 What each cannot prove is written in [`workflows.py`](duet/workflows.py) beside the
-check. `fix` cannot tell that the failure on the original code is *this* bug rather
-than, say, an import of a helper the fix added; `refactor` cannot see behaviour no test
-covers. The tasks tell the reviewer to check exactly those.
+check. `fix` cannot tell that the failure on the original code is *this* bug — and when
+the only failure is a test importing a helper the fix added, it says so in its verdict
+rather than calling that proof. `refactor` cannot see behaviour no test covers. The
+tasks tell the reviewer to check exactly those.
 
 ### `duet run` — both of them, until they agree
 
@@ -515,7 +528,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-368 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+369 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

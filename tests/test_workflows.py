@@ -293,3 +293,27 @@ def test_the_plan_task_asks_for_proportion():
     """
     task = workflow_commands.TASKS["plan"] % {"what": "x", "gate": ""}
     assert "Size the plan to the change" in task
+
+
+def test_a_fix_whose_tests_only_fail_on_an_import_is_accepted_but_flagged(tmp_path):
+    """The replay's documented blind spot, now said out loud.
+
+    The test imports `strip_punct`, a helper the fix added. On the original
+    code that import fails, so the replay "fails on original" — proving the
+    test needs the new code, not that it catches the bug. Blocking would be
+    wrong (pytest drops the whole module on one bad import, real checks
+    included), so it is accepted and the verdict says what it did not prove.
+    """
+    (tmp_path / "slug.py").write_text(BUGGY)
+    (tmp_path / "test_slug.py").write_text(OLD_TEST)
+    helper_fix = envelope("fixed via a helper, tested via the helper", "DONE", patches=[
+        {"path": "slug.py", "content": FIXED + "\n\ndef strip_punct(t):\n    return t\n"},
+        {"path": "test_helper.py",
+         "content": "from slug import strip_punct\n\ndef test_helper():\n    assert strip_punct('a') == 'a'\n"},
+    ])
+    _, result = run(tmp_path, [helper_fix] + [DONE] * 3, [DONE] * 3, workflow="fix", gate=PYTEST)
+    assert result.status == "consensus"
+    path = Path(result.session_dir) / "events.jsonl"
+    proven = [json.loads(l)["detail"] for l in path.read_text().splitlines()
+              if json.loads(l).get("kind") == "workflow_proven"]
+    assert proven and "only because they import" in proven[0]
