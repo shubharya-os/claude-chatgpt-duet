@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>duet — two models, and the rules are checked</title>
+<meta name="description" content="Two AI models build it; the harness checks the rules. fix, add, refactor, build and plan with tests replayed against the original code. Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Cursor.">
+<meta property="og:title" content="duet — two models, and the rules are checked">
+<meta property="og:description" content="An expense-tracker web app from one sentence in 35 minutes — then attacked by hand, and it held.">
+<meta property="og:image" content="https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/docs/social-preview.png">
+<style>
+:root {
+  --bg: #fbfbfa; --fg: #1c1d20; --muted: #62656d; --line: #e4e4e0; --card: #ffffff;
+  --accent: #1f7a6d; --accent-2: #8a4fd6; --bad: #b3261e; --good: #1f7a3d;
+  --term-bg: #15171c; --term-fg: #d9dce3; --term-dim: #7d8391;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+:root:not([data-theme="light"]) { color-scheme: light dark; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317; --fg: #e8e9ec; --muted: #9aa0ab; --line: #262a31; --card: #171a1f;
+    --accent: #4fc3b0; --accent-2: #b48cf2; --bad: #ff8a80; --good: #7fd49a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 var(--sans); }
+main { max-width: 920px; margin: 0 auto; padding: 0 16px 80px; }
+a { color: var(--accent); }
+code, pre { font-family: var(--mono); font-size: 0.9em; }
+header { padding: 64px 0 24px; }
+.kicker { font: 600 13px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: clamp(34px, 6vw, 52px); line-height: 1.08; margin: 10px 0 16px; letter-spacing: -0.02em; }
+h1 em { font-style: normal; color: var(--accent); }
+.lede { font-size: 19px; color: var(--muted); max-width: 680px; }
+h2 { font-size: 26px; margin: 64px 0 8px; letter-spacing: -0.01em; }
+h2 + p { color: var(--muted); margin-top: 0; }
+.term { background: var(--term-bg); color: var(--term-fg); border-radius: 10px; padding: 16px 18px; overflow-x: auto; }
+.term .dim { color: var(--term-dim); }
+.term .ok { color: #7fd49a; } .term .no { color: #ff8a80; } .term .y { color: #f0c674; }
+.install { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 24px 0 8px; }
+.install pre { margin: 0; flex: 1; min-width: 0; }
+button.copy { font: 600 13px var(--sans); border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 18px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.card h3 { margin: 0 0 4px; font: 600 15px var(--mono); color: var(--accent); }
+.card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14.5px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 13px; }
+td.r { color: var(--good); font-weight: 600; white-space: nowrap; }
+td.x { color: var(--bad); font-weight: 600; white-space: nowrap; }
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 18px; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.stat b { display: block; font-size: 28px; letter-spacing: -0.02em; }
+.stat span { color: var(--muted); font-size: 13.5px; }
+.honest { border-left: 3px solid var(--accent-2); padding: 4px 0 4px 16px; color: var(--muted); }
+footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+@media (max-width: 560px) { th:nth-child(3), td:nth-child(3) { display: none; } }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <div class="kicker">duet · open source · MIT</div>
+  <h1>Two AI models build it.<br><em>The harness checks the rules.</em></h1>
+  <p class="lede">A single agent grades its own homework and reports that it passed. duet puts a
+  second model in the loop, runs your tests itself, and holds each workflow to a rule it
+  checks against what actually happened — not what either model says happened.</p>
+  <div class="install">
+    <pre class="term" id="cmd">curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh</pre>
+    <button class="copy" type="button" data-copy="cmd">Copy</button>
+  </div>
+  <p style="color:var(--muted);font-size:14px;margin:0">Uses the Claude and ChatGPT plans you already have — no API keys.
+  One subscription works too. <a href="https://github.com/shubharya-os/claude-chatgpt-duet">GitHub →</a></p>
+</header>
+
+<h2>Six commands, six rules</h2>
+<p>Each one tells the pair its rule — and then checks it.</p>
+<div class="cards">
+  <div class="card"><h3>duet build "…"</h3><p>Start from nothing. The gate is red before any code exists, and a gate already green on an empty directory is refused.</p></div>
+  <div class="card"><h3>duet fix "…"</h3><p>The tests are replayed against a snapshot of the <b>original</b> code. They must fail there and pass now.</p></div>
+  <div class="card"><h3>duet add "…"</h3><p>A test must fail against the code as it was before. A whitespace edit to a test file does not count.</p></div>
+  <div class="card"><h3>duet refactor "…"</h3><p>Every test that existed at the start must end byte-for-byte unchanged. Refused if the suite starts red.</p></div>
+  <div class="card"><h3>duet plan "…"</h3><p>Both argue it out into PLAN.md. Any other file changing clears both sign-offs.</p></div>
+  <div class="card"><h3>duet review</h3><p>A second model reads your diff, held read-only by its backend — not asked politely.</p></div>
+</div>
+
+<h2>An app from one sentence, then attacked</h2>
+<p>An expense-tracker web app — single-page UI, JSON API, SQLite, CSV export — from an empty directory.</p>
+<div class="big">
+  <div class="stat"><b>34m 57s</b><span>to a double sign-off</span></div>
+  <div class="stat"><b>2,963</b><span>lines across 22 files</span></div>
+  <div class="stat"><b>51</b><span>acceptance criteria, agreed first</span></div>
+  <div class="stat"><b>10</b><span>test files, on Python 3.9 and 3.12</span></div>
+</div>
+<p style="margin-top:20px">Then attacked by hand — over HTTP, and in a real browser — not through its own tests:</p>
+<table>
+  <tr><th>attack</th><th>result</th><th>detail</th></tr>
+  <tr><td>SQL injection in a category</td><td class="r">stored as text</td><td><code>x'); DROP TABLE expenses;--</code> — table intact</td></tr>
+  <tr><td>stored XSS, loaded in a browser</td><td class="r">rendered as text</td><td>0 injected elements; no external resources loaded</td></tr>
+  <tr><td>CSV formula injection</td><td class="r">defused</td><td><code>=cmd|…</code> exported as <code>'=cmd|…</code> — added unprompted</td></tr>
+  <tr><td><code>0.1 + 0.2</code></td><td class="r">exactly 0.30</td><td>money kept as integer cents</td></tr>
+  <tr><td>30 simultaneous writes, then restart</td><td class="r">all persisted</td><td>36 of 36 rows</td></tr>
+  <tr><td>10 kinds of malformed request</td><td class="r">right code each</td><td>400, 404, 411, 413, 415</td></tr>
+  <tr><td>bind address</td><td class="r">127.0.0.1</td><td>stated in the spec as the first default</td></tr>
+</table>
+
+<h2>Why the tests are replayed</h2>
+<p>The first version of <code>fix</code> asked only whether the gate had ever gone red. The first live run beat it.</p>
+<pre class="term"><span class="y">claude-sonnet-1 DONE</span>  state 8e75764a        <span class="dim">test and fix written in one turn</span>
+<span class="y">claude-sonnet-2 DONE</span>  state 8e75764a
+<span class="no">✗ both signed off, but the `fix` rule is not met</span>
+claude-sonnet-1 CONTINUE  state 0b73182d, <span class="no">gate FAILING</span>   <span class="dim">re-broke working code on purpose</span>
+...
+<span class="ok">BOTH AGENTS SIGNED OFF</span> on 8e75764a              <span class="dim">byte-identical to the rejected state</span></pre>
+<p>The rule was met by ceremony. So now the harness copies a snapshot of the original code,
+lays the finished tests over it, and runs them there.</p>
+<table>
+  <tr><th></th><th>history rule</th><th>replay</th></tr>
+  <tr><td>rounds</td><td>6</td><td class="r">3</td></tr>
+  <tr><td>vetoes of a correct fix</td><td class="x">1</td><td class="r">0</td></tr>
+  <tr><td>turns spent re-breaking code</td><td class="x">1</td><td class="r">0</td></tr>
+</table>
+
+<h2>It becomes the default</h2>
+<p><code>duet skill default</code> — then the same bug report, word for word, in a fresh Claude Code session.</p>
+<table>
+  <tr><th></th><th>before</th><th>after</th></tr>
+  <tr><td>used duet</td><td class="x">no</td><td class="r">started <code>duet fix</code> on its own</td></tr>
+  <tr><td>tests for the bug</td><td class="x">none added</td><td class="r">8 added; 6 fail on the original with the reported error</td></tr>
+  <tr><td>time</td><td>~1 min</td><td>6 min</td></tr>
+</table>
+<p>Questions, exploration and one-line edits stay direct. Always-on cost: about <b>545 tokens</b> of instructions per session.</p>
+
+<h2>Where it runs</h2>
+<table>
+  <tr><th>harness</th><th>/duet</th><th>default for real changes</th></tr>
+  <tr><td>Claude Code</td><td class="r">✓</td><td><code>~/.claude/CLAUDE.md</code></td></tr>
+  <tr><td>Codex</td><td class="r">$duet</td><td><code>~/.codex/AGENTS.md</code></td></tr>
+  <tr><td>Gemini CLI · Google Antigravity</td><td class="r">✓</td><td><code>~/.gemini/GEMINI.md</code> (shared)</td></tr>
+  <tr><td>OpenCode</td><td class="r">✓</td><td>its <code>AGENTS.md</code>, or your <code>CLAUDE.md</code></td></tr>
+  <tr><td>Cursor · any AGENTS.md reader</td><td>—</td><td><code>duet skill default --project</code></td></tr>
+</table>
+
+<h2>What it cannot do</h2>
+<p class="honest">Two models can agree and still be wrong — one session ended in consensus on a CLI that
+crashed on Python 3.9, because the gate ran on 3.12 and the criteria never named a version. The gate
+only proves what it runs. <code>fix</code> cannot tell that a failure on the original code is <i>this</i>
+bug, and says so when the only failure is an import. Every one of these is written down, with the
+session that found it, in <a href="https://github.com/shubharya-os/claude-chatgpt-duet/blob/main/docs/QA.md">docs/QA.md</a>.</p>
+
+<footer>
+  duet is MIT-licensed. 376 tests; CI on Python 3.9, 3.11 and 3.13, Ubuntu and macOS.
+  · <a href="https://github.com/shubharya-os/claude-chatgpt-duet">Source</a>
+  · <a href="https://github.com/shubharya-os/claude-chatgpt-duet/blob/main/docs/QA.md">Every run, written down</a>
+  · <a href="https://github.com/shubharya-os/claude-chatgpt-duet/blob/main/SECURITY.md">What leaves your machine</a>
+</footer>
+</main>
+<script>
+document.querySelectorAll("button.copy").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var text = document.getElementById(b.dataset.copy).textContent.trim();
+    try {
+      navigator.clipboard.writeText(text).then(function () {
+        b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1500);
+      }, function () { b.textContent = "Select and copy"; });
+    } catch (e) { b.textContent = "Select and copy"; }
+  });
+});
+</script>
+</body>
+</html>
