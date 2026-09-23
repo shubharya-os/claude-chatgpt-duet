@@ -171,6 +171,36 @@ two of them were wrong.
 
 ## What it does
 
+### Coming from ECC?
+
+Both install with one command. The difference is what you carry afterwards, and what
+actually gets checked.
+
+| | ECC 2.2.2, full install | duet |
+|---|---|---|
+| what there is to learn | 386 skills and 68 agents (as `claude plugin details` counts them), hooks, install profiles | 6 commands, one rule each |
+| loaded into every session | ~41,500 tokens — ECC offers smaller profiles | ~545 tokens |
+| README | 2,039 lines | ~600 lines |
+| "write the failing test first" | an instruction to the agent | **checked**: the tests are replayed against the original code |
+| the reviewer | a subagent of the same model | a second model, held read-only by its backend |
+| domain skills | ~300 included | none shipped — duet's agents load whichever skills you install |
+| harnesses | Claude Code, Codex, Kimi Code, OpenCode, Cursor | Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Cursor |
+
+Switching without losing anything you rely on:
+
+```bash
+duet from-ecc                    # what you actually used from ECC, read from your own session logs
+duet from-ecc --keep <name>      # keep that agent or skill, licence notice intact
+claude plugin uninstall ecc@ecc  # you run this; duet never removes anything
+duet skill default               # make duet what your agent reaches for
+```
+
+`duet from-ecc` reads your local Claude Code logs and sends nothing anywhere. On the
+machine it was built on it found two ECC agents in use, once each, out of 454
+skills and agents. The hand-run audit it replaced had got the same question wrong three ways —
+an inflated count, a resumed session counted twice, and a missed agent that removing
+ECC then broke. That is [written up](docs/QA.md) too.
+
 ### `duet review` — a second opinion, one command
 
 The cheap one. It shows the other model your working-tree diff, the contents of any new
@@ -499,6 +529,7 @@ duet login           # sign both sides in
 duet doctor          # real connection check, with the fix for each side
 duet skill install   # use duet from inside Claude Code
 duet skill default   # ...and make it the default for real code changes
+duet from-ecc        # what you used from ECC, and how to switch without losing it
 duet demo            # the whole loop offline — no keys, no network
 duet report          # the last session's report (--transcript for everything said)
 duet sessions        # every session in this workspace
@@ -554,7 +585,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-376 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+383 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

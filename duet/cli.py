@@ -21,6 +21,7 @@ from duet.adapters.base import Adapter
 from duet import gate as gate_detect
 from duet import build as build_cmd
 from duet import workflow_commands
+from duet import from_ecc
 from duet.config import (
     BACKEND_ALIASES,
     DEFAULT_PAIR,
@@ -2303,6 +2304,13 @@ def build_parser() -> argparse.ArgumentParser:
         p_flow = sub.add_parser(name, help=helptext)
         session_args(p_flow, "what", what)
         p_flow.set_defaults(func=lambda a, _n=name: workflow_commands.run(a, _n))
+
+    p_from = sub.add_parser("from-ecc",
+                            help="see what you actually use from ECC, keep it, and switch")
+    p_from.add_argument("--keep", metavar="NAME",
+                        help="copy this ECC agent or skill into ~/.claude before removing ECC")
+    p_from.add_argument("--dir", metavar="HOME", help="treat this directory as home (for testing)")
+    p_from.set_defaults(func=lambda a: from_ecc.run(a))
 
     p_doctor = sub.add_parser("doctor", help="check that both agents are reachable")
     common(p_doctor)

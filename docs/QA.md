@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-376 tests, no network and no credentials required. `pytest -q` from a clean clone.
+383 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -866,10 +866,19 @@ That completes a live run of every session-starting command: `run`, `review`, `b
 
 ECC was removed from this machine once duet covered its workflow layer. Before removing
 it, every local transcript since its install was searched for ECC components that had
-actually been invoked. There was one: `ecc:swift-reviewer`, used 4 times across two
-sessions in another project. It was kept as a standalone agent, licence notice intact.
-Everything else — 386 skills, 67 more agents, 7 hooks, and roughly **41,500 tokens
-loaded into every session** — was not in use.
+actually been invoked. The hand-run search found one: `ecc:swift-reviewer`, "used 4
+times across two sessions". It was kept as a standalone agent, and ECC was removed.
+
+**That audit was wrong three ways**, found three days later when the search became a
+command (`duet from-ecc`) with tests behind it. The "4" was string hits, inflated
+because every session lists ECC's agents in its system context. The "two sessions" were
+one session and its resumed copy — the same call id, `toolu_01WSDtyx…`, at the same
+second in both files. And it **missed a second agent entirely**: `csharp-reviewer`,
+called once, in the same project — so removing ECC had broken it. The command found it
+on its first run, and `duet from-ecc --keep csharp-reviewer` restored it.
+
+Corrected: two agents were in use, once each. Everything else — 386 skills, 66 more
+agents, 7 hooks, and roughly **41,500 tokens loaded into every session** — was not.
 
 The honest boundary: duet replaces ECC's orchestration workflows (build, fix, add,
 refactor, plan, review), and checks their rules where ECC states them. It does not

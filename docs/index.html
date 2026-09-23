@@ -134,6 +134,22 @@ lays the finished tests over it, and runs them there.</p>
 </table>
 <p>Questions, exploration and one-line edits stay direct. Always-on cost: about <b>545 tokens</b> of instructions per session.</p>
 
+<h2>Coming from ECC?</h2>
+<p>Both install with one command. The difference is what you carry afterwards, and what gets checked.</p>
+<table>
+  <tr><th></th><th>ECC 2.2.2, full install</th><th>duet</th></tr>
+  <tr><td>to learn</td><td>386 skills, 68 agents, hooks, profiles</td><td class="r">6 commands</td></tr>
+  <tr><td>every session</td><td>~41,500 tokens (smaller profiles exist)</td><td class="r">~545 tokens</td></tr>
+  <tr><td>"test first"</td><td>an instruction</td><td class="r">checked by replay</td></tr>
+  <tr><td>reviewer</td><td>same model, another role</td><td class="r">a second model</td></tr>
+  <tr><td>domain skills</td><td>~300 included</td><td>use any you install</td></tr>
+</table>
+<pre class="term">duet from-ecc                    <span class="dim"># what you actually used, from your own logs</span>
+duet from-ecc --keep &lt;name&gt;      <span class="dim"># keep it, licence intact</span>
+claude plugin uninstall ecc@ecc  <span class="dim"># you run this</span>
+duet skill default</pre>
+<p>On the machine it was built on: two ECC agents in use, once each, out of 454 skills and agents.</p>
+
 <h2>Where it runs</h2>
 <table>
   <tr><th>harness</th><th>/duet</th><th>default for real changes</th></tr>
@@ -152,7 +168,7 @@ bug, and says so when the only failure is an import. Every one of these is writt
 session that found it, in <a href="https://github.com/shubharya-os/duet/blob/main/docs/QA.md">docs/QA.md</a>.</p>
 
 <footer>
-  duet is MIT-licensed. 376 tests; CI on Python 3.9, 3.11 and 3.13, Ubuntu and macOS.
+  duet is MIT-licensed. 383 tests; CI on Python 3.9, 3.11 and 3.13, Ubuntu and macOS.
   · <a href="https://github.com/shubharya-os/duet">Source</a>
   · <a href="https://github.com/shubharya-os/duet/blob/main/docs/QA.md">Every run, written down</a>
   · <a href="https://github.com/shubharya-os/duet/blob/main/SECURITY.md">What leaves your machine</a>
