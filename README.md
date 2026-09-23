@@ -3,8 +3,11 @@
 [![ci](https://github.com/shubharya-os/claude-chatgpt-duet/actions/workflows/ci.yml/badge.svg)](https://github.com/shubharya-os/claude-chatgpt-duet/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![website](https://img.shields.io/badge/website-duet-1f7a6d)](https://shubharya-os.github.io/claude-chatgpt-duet/)
 
-**Stop copy-pasting between ChatGPT and Claude Code.**
+**Read in:** English · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português (BR)](docs/i18n/pt-BR.md)
+
+**Two AI models build it. The harness checks the rules.**
 
 <img src="docs/session.svg" alt="A duet session: Claude Code and ChatGPT taking turns until both sign off" width="760">
 

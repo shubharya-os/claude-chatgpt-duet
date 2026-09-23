@@ -11,11 +11,11 @@
 
   <g font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">
     <text x="90" y="490" font-size="66" font-weight="700" fill="#c9d1d9">duet</text>
-    <text x="90" y="570" font-size="36" fill="#c9d1d9">Stop copy-pasting between</text>
-    <text x="90" y="620" font-size="36" fill="#c9d1d9">ChatGPT and Claude Code.</text>
+    <text x="90" y="570" font-size="36" fill="#c9d1d9">Two AI models build it.</text>
+    <text x="90" y="620" font-size="36" fill="#c9d1d9">The harness checks the rules.</text>
 
-    <text x="90" y="712" font-size="23" fill="#8b949e">They work the same task in your repo, argue,</text>
-    <text x="90" y="748" font-size="23" fill="#8b949e">and neither one can call it done alone.</text>
+    <text x="90" y="712" font-size="23" fill="#8b949e">fix · add · refactor · build · plan, with the</text>
+    <text x="90" y="748" font-size="23" fill="#8b949e">tests replayed against the original code.</text>
 
     <g font-size="22">
       <rect x="90" y="796" width="300" height="46" rx="8" fill="#161b22" stroke="#30363d"/>
