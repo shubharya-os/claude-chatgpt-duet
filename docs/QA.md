@@ -993,7 +993,7 @@ the block asks. Only the final message survives a non-interactive run.
 
 | path | result |
 |---|---|
-| `pip install git+https://github.com/shubharya-os/claude-chatgpt-duet` | works from a bare venv; `duet` on PATH; the skill ships inside the wheel |
+| `pip install git+https://github.com/shubharya-os/duet` | works from a bare venv; `duet` on PATH; the skill ships inside the wheel |
 | `pip install .` from a clone | works down to pip 21.2 / setuptools 58 / Python 3.9 |
 | `pip install -e .` | needs pip ≥ 21.3 and setuptools ≥ 61; a `setup.py` shim covers the legacy path, and CI asserts a plain install yields a working command |
 | `python3 -m duet` | always equivalent, no PATH needed |

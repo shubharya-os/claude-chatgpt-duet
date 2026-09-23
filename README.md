@@ -1,9 +1,9 @@
 # duet
 
-[![ci](https://github.com/shubharya-os/claude-chatgpt-duet/actions/workflows/ci.yml/badge.svg)](https://github.com/shubharya-os/claude-chatgpt-duet/actions/workflows/ci.yml)
+[![ci](https://github.com/shubharya-os/duet/actions/workflows/ci.yml/badge.svg)](https://github.com/shubharya-os/duet/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![website](https://img.shields.io/badge/website-duet-1f7a6d)](https://shubharya-os.github.io/claude-chatgpt-duet/)
+[![website](https://img.shields.io/badge/website-duet-1f7a6d)](https://shubharya-os.github.io/duet/)
 
 **Read in:** English · [简体中文](docs/i18n/zh-CN.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Español](docs/i18n/es.md) · [Português (BR)](docs/i18n/pt-BR.md)
 
@@ -72,7 +72,7 @@ never loses track of what was said four messages ago, and never lets the two of 
 quietly agree they're finished.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 ```
 
 That does the whole thing: installs duet, then runs `duet setup`, which installs
@@ -101,7 +101,7 @@ in it.
 <summary>or with pip, if you would rather not pipe a script to a shell</summary>
 
 ```bash
-pip install git+https://github.com/shubharya-os/claude-chatgpt-duet
+pip install git+https://github.com/shubharya-os/duet
 duet setup
 ```
 
@@ -308,7 +308,7 @@ can only agree by argument.
 **Requirements:** Python 3.9+, Node, a Claude plan and a ChatGPT plan.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 ```
 
 It is short and does nothing you could not do by hand — read it first if you
@@ -324,7 +324,7 @@ duet skill install
 <summary>or from a clone</summary>
 
 ```bash
-git clone https://github.com/shubharya-os/claude-chatgpt-duet && cd claude-chatgpt-duet
+git clone https://github.com/shubharya-os/duet && cd duet
 pip install .
 ```
 

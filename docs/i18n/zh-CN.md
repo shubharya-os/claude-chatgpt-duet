@@ -7,7 +7,7 @@
 ## 安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 ```
 
 使用你已有的 Claude 和 ChatGPT 订阅——**不需要 API key**。只有一个订阅也能用（例如 `--pair claude:opus+claude:sonnet`）。

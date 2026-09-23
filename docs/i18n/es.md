@@ -7,7 +7,7 @@ Un solo agente de IA corrige sus propios deberes y dice que aprobó. duet añade
 ## Instalación
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 ```
 
 Usa las suscripciones de Claude y ChatGPT que ya tienes — **sin claves de API**. Con una sola suscripción también funciona (por ejemplo `--pair claude:opus+claude:sonnet`).

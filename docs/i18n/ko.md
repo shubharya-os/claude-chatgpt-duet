@@ -7,7 +7,7 @@ AI 에이전트 하나는 자기 숙제를 스스로 채점하고 "통과"라고
 ## 설치
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 ```
 
 이미 가진 Claude와 ChatGPT 구독을 그대로 사용합니다 — **API 키가 필요 없습니다**. 구독이 하나뿐이어도 동작합니다 (예: `--pair claude:opus+claude:sonnet`).

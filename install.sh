@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # One command to a working /duet:
 #
-#   curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 #
 # Installs duet, then runs `duet setup`, which installs the two agent CLIs if
 # they are missing, signs you in to both, and adds /duet to Claude Code and
@@ -9,7 +9,7 @@
 # purpose so you can read it before piping it to a shell.
 set -e
 
-REPO="${DUET_REPO:-https://github.com/shubharya-os/claude-chatgpt-duet}"
+REPO="${DUET_REPO:-https://github.com/shubharya-os/duet}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf '%s\n' "$*" >&2; exit 1; }

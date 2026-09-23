@@ -6,7 +6,7 @@ agents: say what is wrong, and say what would fix it.
 ## Getting set up
 
 ```bash
-git clone https://github.com/shubharya-os/claude-chatgpt-duet && cd claude-chatgpt-duet
+git clone https://github.com/shubharya-os/duet && cd duet
 pip install -e . pytest      # editable needs pip >= 21.3 and setuptools >= 61
 pytest -q                    # 280 tests, no network and no credentials needed
 duet demo                    # the real orchestrator against scripted peers

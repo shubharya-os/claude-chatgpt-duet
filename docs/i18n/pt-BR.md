@@ -7,7 +7,7 @@ Um único agente de IA corrige a própria lição de casa e diz que passou. O du
 ## Instalação
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 ```
 
 Usa as assinaturas do Claude e do ChatGPT que você já tem — **sem chaves de API**. Com uma só assinatura também funciona (por exemplo `--pair claude:opus+claude:sonnet`).

@@ -7,7 +7,7 @@
 <meta name="description" content="Two AI models build it; the harness checks the rules. fix, add, refactor, build and plan with tests replayed against the original code. Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Cursor.">
 <meta property="og:title" content="duet — two models, and the rules are checked">
 <meta property="og:description" content="An expense-tracker web app from one sentence in 35 minutes — then attacked by hand, and it held.">
-<meta property="og:image" content="https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/docs/social-preview.png">
+<meta property="og:image" content="https://raw.githubusercontent.com/shubharya-os/duet/main/docs/social-preview.png">
 <style>
 :root {
   --bg: #fbfbfa; --fg: #1c1d20; --muted: #62656d; --line: #e4e4e0; --card: #ffffff;
@@ -69,11 +69,11 @@ footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
   second model in the loop, runs your tests itself, and holds each workflow to a rule it
   checks against what actually happened — not what either model says happened.</p>
   <div class="install">
-    <pre class="term" id="cmd">curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh</pre>
+    <pre class="term" id="cmd">curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh</pre>
     <button class="copy" type="button" data-copy="cmd">Copy</button>
   </div>
   <p style="color:var(--muted);font-size:14px;margin:0">Uses the Claude and ChatGPT plans you already have — no API keys.
-  One subscription works too. <a href="https://github.com/shubharya-os/claude-chatgpt-duet">GitHub →</a></p>
+  One subscription works too. <a href="https://github.com/shubharya-os/duet">GitHub →</a></p>
 </header>
 
 <h2>Six commands, six rules</h2>
@@ -149,13 +149,13 @@ lays the finished tests over it, and runs them there.</p>
 crashed on Python 3.9, because the gate ran on 3.12 and the criteria never named a version. The gate
 only proves what it runs. <code>fix</code> cannot tell that a failure on the original code is <i>this</i>
 bug, and says so when the only failure is an import. Every one of these is written down, with the
-session that found it, in <a href="https://github.com/shubharya-os/claude-chatgpt-duet/blob/main/docs/QA.md">docs/QA.md</a>.</p>
+session that found it, in <a href="https://github.com/shubharya-os/duet/blob/main/docs/QA.md">docs/QA.md</a>.</p>
 
 <footer>
   duet is MIT-licensed. 376 tests; CI on Python 3.9, 3.11 and 3.13, Ubuntu and macOS.
-  · <a href="https://github.com/shubharya-os/claude-chatgpt-duet">Source</a>
-  · <a href="https://github.com/shubharya-os/claude-chatgpt-duet/blob/main/docs/QA.md">Every run, written down</a>
-  · <a href="https://github.com/shubharya-os/claude-chatgpt-duet/blob/main/SECURITY.md">What leaves your machine</a>
+  · <a href="https://github.com/shubharya-os/duet">Source</a>
+  · <a href="https://github.com/shubharya-os/duet/blob/main/docs/QA.md">Every run, written down</a>
+  · <a href="https://github.com/shubharya-os/duet/blob/main/SECURITY.md">What leaves your machine</a>
 </footer>
 </main>
 <script>

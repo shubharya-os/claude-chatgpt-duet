@@ -7,7 +7,7 @@ AI エージェントが1体だけだと、自分の宿題を自分で採点し�
 ## インストール
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shubharya-os/claude-chatgpt-duet/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/shubharya-os/duet/main/install.sh | sh
 ```
 
 手持ちの Claude と ChatGPT のサブスクリプションをそのまま使います — **API キーは不要**。サブスクリプションが1つでも動きます（例: `--pair claude:opus+claude:sonnet`）。
