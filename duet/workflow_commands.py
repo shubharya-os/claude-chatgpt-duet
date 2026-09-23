@@ -110,6 +110,14 @@ reviewer and the plan is out of proportion to the work, that is an objection
 worth raising; thoroughness nobody needed is a cost, not a virtue.""",
 }
 
+QUICK = """
+
+QUICK — this session has exactly two turns, one each. There is no round three.
+If you write the plan: write all of it now, and vote DONE if you would ship it
+as written — your peer still has to approve it. If you review it: this is the
+only review. Fix what is wrong directly in PLAN.md rather than raising it for a
+turn that will not come, and vote DONE only if you would ship the result."""
+
 USAGE = {
     "fix": 'duet fix "the export drops rows whose name contains a comma"',
     "add": 'duet add "a --json flag that prints the report as JSON"',
@@ -197,6 +205,9 @@ def run(args, name: str) -> int:
                " tracing it by hand." % args.allow_run)
     args.task = [TASKS[name] % {"what": what, "gate": effective or "(none — this is a plan)",
                                 "tests": tests, "run": run}]
+    if name == "plan" and getattr(args, "quick", False):
+        args.rounds = 2
+        args.task[0] += QUICK
     args.file = None
     return cli.cmd_run(args)
 

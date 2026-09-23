@@ -132,3 +132,61 @@ def _kinds(orch):
     import json
     path = orch.session_dir / "events.jsonl"
     return [json.loads(l)["kind"] for l in path.read_text().splitlines() if l.strip()]
+
+
+# -- duet plan --quick ------------------------------------------------------
+
+def quick(tmp_path, lead, reviewer):
+    from duet.orchestrator import Orchestrator as O
+    (tmp_path / "app.py").write_text("x = 1\n")
+    cfg = Config(task="t", root=str(tmp_path), start="claude", max_rounds=2, workflow="plan",
+                 workflow_state={"quick": True},
+                 agents=[AgentSpec("claude", "mock"), AgentSpec("gpt", "mock")])
+    orch = O(cfg, adapters={
+        "claude": MockAdapter(name="claude", cwd=str(tmp_path), config={"script": [lead]}),
+        "gpt": MockAdapter(name="gpt", cwd=str(tmp_path), config={"script": [reviewer]}),
+    })
+    return orch.run()
+
+
+DRAFT = envelope("the plan", "DONE", confidence=0.9,
+                 patches=[{"path": "PLAN.md", "content": "1. do it\n"}])
+
+
+def test_quick_plan_approved_after_a_reviewer_edit_is_reviewed_not_signed_off(tmp_path):
+    edited = envelope("tightened step 1", "DONE", confidence=0.9,
+                      patches=[{"path": "PLAN.md", "content": "1. do it, then check it\n"}])
+    result = quick(tmp_path, DRAFT, edited)
+    assert result.status == "reviewed"
+    assert "not re-checked by claude" in result.reason
+
+
+def test_quick_plan_the_reviewer_leaves_alone_is_a_real_double_sign_off(tmp_path):
+    assert quick(tmp_path, DRAFT, DONE).status == "consensus"
+
+
+def test_quick_plan_the_reviewer_rejects_is_not_reported_as_reviewed(tmp_path):
+    no = envelope("step 1 is wrong", "CONTINUE",
+                  issues=[{"id": "bad-step", "title": "wrong", "severity": "major", "detail": "redo"}])
+    result = quick(tmp_path, DRAFT, no)
+    assert result.status == "exhausted" and "did not approve" in result.reason
+
+
+def test_quick_plan_is_still_held_to_the_plan_rule(tmp_path):
+    touched = envelope("also fixed the code", "DONE", confidence=0.9,
+                       patches=[{"path": "app.py", "content": "x = 2\n"}])
+    result = quick(tmp_path, DRAFT, touched)
+    assert result.status == "exhausted" and "app.py" in result.reason
+
+
+def test_quick_is_two_turns_and_says_so(tmp_path, monkeypatch):
+    from duet import cli, workflow_commands
+
+    seen = {}
+    monkeypatch.setattr(cli.gate_detect, "detect", lambda root: "")
+    monkeypatch.setattr(cli, "cmd_run", lambda args: seen.update(vars(args)) or 0)
+    parser = cli.build_parser()
+    args = parser.parse_args(["plan", "--quick", "-C", str(tmp_path), "--allow-nested", "move it"])
+    assert workflow_commands.run(args, "plan") == 0
+    assert seen["rounds"] == 2 and "exactly two turns" in seen["task"][0]
+    assert cli.build_config(args).workflow_state.get("quick") is True

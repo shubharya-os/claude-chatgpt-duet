@@ -35,7 +35,7 @@ from duet.config import (
     parse_pair,
     save_config,
 )
-from duet.orchestrator import Orchestrator, STATUS_CONSENSUS, rounds_taken
+from duet.orchestrator import Orchestrator, STATUS_CONSENSUS, STATUS_REVIEWED, rounds_taken
 from duet.protocol import BLOCKING_SEVERITIES, SEVERITIES, parse_envelope
 
 PREVIEW_CHARS = 700
@@ -229,6 +229,8 @@ def build_config(args: argparse.Namespace) -> Config:
         cfg.workflow = args.workflow
     if getattr(args, "allow_run", ""):
         cfg.allow_run = args.allow_run
+    if getattr(args, "quick", False):
+        cfg.workflow_state["quick"] = True
     if getattr(args, "accept", None):
         cfg.acceptance = args.accept
     if getattr(args, "accept_file", None):
@@ -309,7 +311,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     orch = Orchestrator(cfg, reporter=make_reporter(cfg.agent_names, verbose=not args.quiet, as_json=args.json))
     result = orch.run()
-    return 0 if result.status == STATUS_CONSENSUS else 1
+    return 0 if result.status in (STATUS_CONSENSUS, STATUS_REVIEWED) else 1
 
 
 def preflight(cfg: Config) -> List[str]:
@@ -2305,6 +2307,11 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         p_flow = sub.add_parser(name, help=helptext)
         session_args(p_flow, "what", what)
+        if name == "plan":
+            p_flow.add_argument(
+                "--quick", action="store_true",
+                help="two turns: a full draft, then one review that may edit it — "
+                     "minutes, not rounds; reported as reviewed, not as signed off by both")
         p_flow.set_defaults(func=lambda a, _n=name: workflow_commands.run(a, _n))
 
     p_from = sub.add_parser("from-ecc",

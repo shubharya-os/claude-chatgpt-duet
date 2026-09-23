@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-392 tests, no network and no credentials required. `pytest -q` from a clean clone.
+397 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -1105,6 +1105,23 @@ each made a real catch (a monkeypatch that cannot reach a Redis server, a
 "passes on both backends" contradiction, a stale function reference). Two agents
 cost at least two turns, and that is the price of the catches. If a first read is
 all you need, `duet review` is one agent, one pass.
+
+### `duet plan --quick`
+
+For when a plan is wanted in minutes: exactly two turns. The lead writes the whole plan
+and votes DONE if they'd ship it; the reviewer gets the only review and fixes what is
+wrong in place. If the reviewer changes nothing, both signatures are on the same file and
+it is a real consensus. If the reviewer edits and approves, the session ends as
+**reviewed**, not as signed off by both, and says whose changes went unchecked. The plan
+rule is still enforced, and a reviewer who does not approve ends it as not done.
+
+Live (same rate-limiter brief, Opus + Sonnet, load average 330–620): **4 min 48 s**. The
+lead ran the suite; the reviewer found and fixed a real contradiction (step 2 kept the
+local monotonic clock as the default while the clock section assumed Redis `TIME`, so the
+buggy path won). ECC's 3–4 min came from a different day's load, so read this as "the
+same order", not a head-to-head.
+
+¹ in the README table: that run, not a benchmark.
 
 ## Install paths checked live
 

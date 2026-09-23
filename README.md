@@ -35,6 +35,7 @@ duet fix "export drops rows with commas"     # its tests must fail on the origin
 duet add "a --json flag on report"           # a test must fail without the feature
 duet refactor "split parser.py in two"       # existing tests may not change by a byte
 duet plan "move storage to Postgres"         # both argue it out; only PLAN.md may change
+                                             # --quick: one draft, one review, ~5 min
 duet review                                  # a second model reads your diff, read-only
 ```
 
@@ -196,7 +197,10 @@ full method and every caveat in [docs/QA.md](docs/QA.md):
 | 100 simultaneous writes, x3 | **300/300** | 218/300 | duet |
 | its own test suite | passes | hangs after 31 tests | duet |
 | planning, 5 planted pitfalls, graded blind | 4/5 and 5/5 | 4/5 and 5/5 | tie |
-| planning time | 8–10 min | **3–4 min** | **ECC** |
+| planning time, full debate | 8–10 min | **3–4 min** | **ECC** |
+| planning time, `duet plan --quick` (one draft, one review) | 4 min 48 s ¹ | 3–4 min | close |
+
+¹ One live run on a heavily loaded machine, not a head-to-head; the reviewer still caught a real contradiction. Details in [QA.md](docs/QA.md).
 
 Switching without losing anything you rely on:
 
@@ -302,7 +306,7 @@ sign-offs are cleared and both are told which rule, and why.
 | `duet fix "<bug>"` | the tests must catch the bug | today's tests are **replayed against the original code**; they must fail there and pass now. Deleting a test that existed is refused |
 | `duet add "<feature>"` | something must test the feature | a test was added or changed, **and** the tests fail against the code as it was before |
 | `duet refactor "<change>"` | behaviour must not change | every test that existed at the start ends **byte-for-byte unchanged**; refused outright if the suite is red before it starts |
-| `duet plan "<goal>"` | plan, don't build | only `PLAN.md` may change, and it must not be empty |
+| `duet plan "<goal>"` | plan, don't build | only `PLAN.md` may change, and it must not be empty. `--quick`: two turns, reported as *reviewed*, not signed off by both |
 
 ```bash
 duet fix "slugify('Hello, World!') returns 'hello,-world!' — punctuation should be stripped"
@@ -597,7 +601,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-392 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+397 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

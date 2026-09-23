@@ -30,6 +30,10 @@ STATUS_EXHAUSTED = "exhausted"
 STATUS_BLOCKED = "blocked"
 STATUS_ERROR = "error"
 STATUS_INTERRUPTED = "interrupted"
+# `--quick`: a draft and one approving review, held to the workflow's rule, but
+# without the lead re-checking whatever the reviewer changed. Not a consensus,
+# and reported as something else so nobody reads it as one.
+STATUS_REVIEWED = "reviewed"
 
 # A refused call that would have changed a file. An agent whose edit was
 # refused can still write "fixed it"; in a live `duet plan` run that cost two
@@ -611,6 +615,19 @@ class Orchestrator:
             # correction is lost across the resume.
             if agent and directive:
                 self.pending_directive[agent] = directive
+
+        if status == STATUS_EXHAUSTED and self.workflow and cfg.workflow_state.get("quick"):
+            last = self.turns[-1] if self.turns else None
+            veto = self.workflow.veto(cfg.root, cfg.workflow_state)
+            if veto:
+                reason = "quick: the `%s` rule is not met — %s" % (self.workflow.name, veto)
+            elif not last or last.error or last.envelope.verdict != "DONE":
+                reason = "quick: the one review did not approve it — see the open issues in the report"
+            else:
+                status = STATUS_REVIEWED
+                reason = ("quick: drafted by %s, approved in one review by %s; what %s changed "
+                          "in that review was not re-checked by %s" % (order[0], last.agent,
+                                                                      last.agent, order[0]))
 
         digest = self.workspace.digest()
         gate = self.gate_for(digest)
