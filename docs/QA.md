@@ -832,6 +832,23 @@ replay of a test that misses the bug:  passes on original →  vetoed
 edit. Both replay tests fail with replay disabled — they are the two cases only a replay
 can decide.
 
+Then both were run live on the replay code, same pair, fresh bugs:
+
+| | `fix` (history rule) | `fix` (replay) | `add` (replay) |
+|---|---|---|---|
+| task | punctuation in `slugify` | `parse_price("$1,234.50")` raising | `total_units(stock)` |
+| rounds | 6 | **3** | 3 |
+| vetoes | 1 — of a correct fix | **0** | 0 |
+| turns spent re-breaking working code | 1 | **0** | 0 |
+| recorded replay | — | `fails on original` | `fails on original` |
+
+Replayed by hand afterwards rather than trusted: the fixed `parse_price` returns
+`1234.5`, and the pair's tests laid over the original code give **1 failed, 2 passed** —
+the new test catches the bug and the old ones still hold, which is exactly the
+question the replay asks. `total_units` returns 5 and 0 on the obvious cases, 23 tests
+pass, 21 of them the originals.
+
+
 ## Install paths checked live
 
 | path | result |
