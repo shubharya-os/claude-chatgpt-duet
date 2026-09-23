@@ -1027,6 +1027,47 @@ task hit a ceiling — both tools scored 5/5 — so it cannot show whether the r
 problems it was not built from. That needs a harder fresh benchmark, and not a series of
 new ones run until duet wins.
 
+## Head-to-head with ECC: building an app
+
+The expense-tracker brief — stdlib server, single-page UI, JSON API, SQLite, CSV export,
+"safe against SQL injection and HTML injection", bound to 127.0.0.1 — given word for word
+to ECC's own build workflow, `orch-build-mvp`, installed properly with its subagents and
+default hooks inside the benchmark folder only, on opus. duet's result is the build
+recorded above. Both apps were then attacked with **one script**, whose scoring rule was
+written into it before either result was seen: bad input must get a 4xx, never a 2xx or a
+5xx, and the server must still answer afterwards.
+
+| | duet `build` | ECC `orch-build-mvp` |
+|---|---|---|
+| time | **34m 57s, both signed off** | not finished at 82m — see below |
+| its own test suite | passes, on 3.12 and 3.9 | 31 tests pass, then the summary tests hang |
+| SQL injection | stored as text | stored as text |
+| stored XSS, loaded in a real browser | 0 injected elements | 0 injected elements |
+| CSV formula injection | defused | defused |
+| 14 kinds of malformed request | all rejected | all rejected (422 for validation — equally correct) |
+| `0.1 + 0.2` | exactly 0.30 | exactly 0.30 |
+| bind address | 127.0.0.1 | 127.0.0.1 |
+| survives a restart | yes | yes |
+| **100 simultaneous writes, x3, interleaved** | **300/300** | **218/300** |
+
+**The unfinished run is my harness, not ECC.** Run non-interactively, `claude -p` ended at
+82 minutes with "Background tasks still running after 600s; terminating" — ECC was holding
+its last edits (a HEAD route, `chmod 0600` on the database) until its Python reviewer
+finished. An interactive session would have waited. What was attacked is what was on disk
+at that point.
+
+**The concurrency gap is structural and reproduced.** duet's pair raised the listen backlog
+to 128; ECC's server keeps Python's default of 5, so a burst of simultaneous connections
+overflows it and about a quarter are refused. At 30 simultaneous writes the gap was 90/90
+against 89/90 — within noise — and it only opened when the hypothesis was tested directly
+at 100. A first, non-interleaved run under a load average of 155 (iOS simulators from
+another project) had shown duet *behind*; that was client timeouts under load, with every
+row still written, and it is not counted.
+
+**What this is and is not.** One brief, one run each. On security and validation the two
+apps are indistinguishable; the differences are time to a finished, agreed result and
+behaviour under a connection burst. Planning, above, was a tie — and ECC was faster there.
+
 ## Install paths checked live
 
 | path | result |

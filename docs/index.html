@@ -150,6 +150,18 @@ claude plugin uninstall ecc@ecc  <span class="dim"># you run this</span>
 duet skill default</pre>
 <p>On the machine it was built on: two ECC agents in use, once each, out of 454 skills and agents.</p>
 
+<h2>Run against ECC</h2>
+<p>Same brief, same model, ECC installed with its own agents. One build, two plans, graded blind.</p>
+<table>
+  <tr><th></th><th>duet</th><th>ECC</th></tr>
+  <tr><td>build an app from one spec</td><td class="r">finished, 35 min</td><td>unfinished at 82 min</td></tr>
+  <tr><td>security &amp; validation attacks</td><td class="r">all held</td><td class="r">all held</td></tr>
+  <tr><td>100 simultaneous writes, x3</td><td class="r">300/300</td><td class="x">218/300</td></tr>
+  <tr><td>planning pitfalls caught (blind)</td><td>4/5 · 5/5</td><td>4/5 · 5/5</td></tr>
+  <tr><td>planning time</td><td>8–10 min</td><td class="r">3–4 min</td></tr>
+</table>
+<p>ECC won planning speed; the rest is in <a href="https://github.com/shubharya-os/duet/blob/main/docs/QA.md">docs/QA.md</a>, caveats included.</p>
+
 <h2>Where it runs</h2>
 <table>
   <tr><th>harness</th><th>/duet</th><th>default for real changes</th></tr>

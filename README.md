@@ -186,6 +186,18 @@ actually gets checked.
 | domain skills | ~300 included | none shipped — duet's agents load whichever skills you install |
 | harnesses | Claude Code, Codex, Kimi Code, OpenCode, Cursor | Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Cursor |
 
+**Run against each other**, same brief, same model, ECC installed with its own agents —
+full method and every caveat in [docs/QA.md](docs/QA.md):
+
+| | duet | ECC | |
+|---|---|---|---|
+| build an app from one spec | **finished, 35 min** | not finished at 82 min (cut off by the non-interactive harness, not by ECC) | |
+| security + validation attacks on the result | all defended | all defended | tie |
+| 100 simultaneous writes, x3 | **300/300** | 218/300 | duet |
+| its own test suite | passes | hangs after 31 tests | duet |
+| planning, 5 planted pitfalls, graded blind | 4/5 and 5/5 | 4/5 and 5/5 | tie |
+| planning time | 8–10 min | **3–4 min** | **ECC** |
+
 Switching without losing anything you rely on:
 
 ```bash
