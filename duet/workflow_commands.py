@@ -21,14 +21,18 @@ Fix this bug:
 %(what)s
 
 The rule this session is held to, checked by the harness rather than taken on
-trust: no sign-off counts until the gate has FAILED on the unfixed code. So:
+trust: when you both sign off, the harness runs your tests against a snapshot
+of the code as it was before this session. They must FAIL there and pass now.
+If they would have passed on the buggy code too, they do not catch the bug, and
+the sign-offs are cleared. So:
 
-1. REPRODUCE IT. Write a test that fails because of this bug, and let the gate
-   go red on it. If an existing test already fails because of it, say which.
-   A test that fails for any other reason — a typo, a missing import — does not
-   reproduce anything, and your peer should say so.
+1. REPRODUCE IT. Write a test that fails because of this bug. If an existing
+   test already fails because of it, say which. You do not need to leave the
+   gate red for a turn to prove it — the harness replays the original itself —
+   and you should not re-break working code to show it.
 
-2. FIX IT, until the gate is green again with that test still in place.
+2. FIX IT, until the gate is green with that test in place. Do not delete a
+   test that existed at the start; that is refused outright.
 
 3. NAME THE CAUSE. Say what was actually wrong and why the change addresses the
    cause rather than the symptom. Look for the same mistake elsewhere.
@@ -37,17 +41,19 @@ The gate is exactly this, run from the root of this directory:
 
     %(gate)s
 
-Reviewer: check that the reproducing test fails for the reason the bug
-describes, not merely that it failed.""",
+Reviewer: the replay proves the test fails on the original code, not WHY.
+Check that it fails for the reason the bug describes — not, say, because it
+imports a helper the fix introduced, which would fail on the original too.""",
 
 "add": """\
 Add this to the project:
 
 %(what)s
 
-The rule this session is held to, checked by the harness: no sign-off counts
-until a test that exercises this was added or extended, compared against the
-test files as they were when the session started.
+The rule this session is held to, checked by the harness: when you both sign
+off, it runs your tests against a snapshot of the code as it was before this
+session. At least one must FAIL there — a test that would have passed without
+the feature does not test the feature.
 
 1. AGREE WHAT IT SHOULD DO before writing it — including the unhappy paths.
 2. WRITE THE TEST FIRST, and watch it fail.
@@ -168,8 +174,8 @@ def run(args, name: str) -> int:
 
 
 RULES = {
-    "fix": "no sign-off until the gate has failed on the unfixed code",
-    "add": "no sign-off until a test was added or extended",
+    "fix": "the tests must fail against the original code, and pass now",
+    "add": "a test must fail against the code as it was before",
     "refactor": "existing tests must end byte-for-byte unchanged, gate green",
     "plan": "only PLAN.md may change, and it must not be empty",
 }

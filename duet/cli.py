@@ -2118,9 +2118,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_build.set_defaults(func=build_cmd.run)
 
     for name, helptext, what in (
-        ("fix", "fix a bug — no sign-off until it has been reproduced as a failing test",
+        ("fix", "fix a bug — its tests must fail on the original code, and pass now",
          "the bug, as you would describe it to a colleague"),
-        ("add", "add a feature — no sign-off until a test exercises it",
+        ("add", "add a feature — a test must fail without it",
          "the feature, in a sentence"),
         ("refactor", "restructure without changing behaviour — existing tests may not be edited",
          "what to restructure"),
