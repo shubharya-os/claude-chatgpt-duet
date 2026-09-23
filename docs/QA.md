@@ -849,6 +849,32 @@ question the replay asks. `total_units` returns 5 and 0 on the obvious cases, 23
 pass, 21 of them the originals.
 
 
+## `duet plan`, and all seven commands run live
+
+"Persist the stock ledger to a JSON file, with writes that cannot leave a half-written
+file if the process dies mid-save", on the refactored inventory project. **3 rounds,
+consensus.** The rule held without firing: `inventory.py` and `test_inventory.py` came
+out byte-identical to how they went in, and `PLAN.md` is 211 lines covering the
+atomicity mechanism, order of implementation, what could go wrong at each step, scope
+cuts, a section headed *"Where I expect disagreement"*, the reviewer's response, and
+verification.
+
+That completes a live run of every session-starting command: `run`, `review`, `build`
+(Python and Go), `fix`, `add`, `refactor`, `plan`.
+
+## Replacing ECC, checked before it was removed
+
+ECC was removed from this machine once duet covered its workflow layer. Before removing
+it, every local transcript since its install was searched for ECC components that had
+actually been invoked. There was one: `ecc:swift-reviewer`, used 4 times across two
+sessions in another project. It was kept as a standalone agent, licence notice intact.
+Everything else — 386 skills, 67 more agents, 7 hooks, and roughly **41,500 tokens
+loaded into every session** — was not in use.
+
+The honest boundary: duet replaces ECC's orchestration workflows (build, fix, add,
+refactor, plan, review), and checks their rules where ECC states them. It does not
+replace ECC's ~300 domain skills, and does not try to.
+
 ## Install paths checked live
 
 | path | result |
