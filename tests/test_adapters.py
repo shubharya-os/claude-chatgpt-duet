@@ -372,6 +372,8 @@ def test_a_transient_sign_in_blip_is_confirmed_before_being_believed(tmp_path):
     """A live session lost a whole round to a 'not logged in' from codex whose
     login was fine before and after. Check the real state before giving up."""
     agent = CodexCliAdapter(name="gpt", cwd=str(tmp_path))
+    # Per test, not a fixed /tmp path: two suites run side by side raced on it.
+    marker = str(tmp_path / "blip-done")
     agent.bin = fake_bin(tmp_path, "codex", r'''
 for a in "$@"; do
   if [ "$a" = "status" ]; then echo "Logged in using ChatGPT"; exit 0; fi
@@ -381,22 +383,13 @@ while [ $# -gt 0 ]; do
   if [ "$1" = "-o" ]; then out="$2"; fi
   shift
 done
-if [ -f /tmp/duet-blip-done ]; then
-  printf '%s' '{"message":"second attempt worked","verdict":"DONE"}' > "$out"; exit 0
+if [ -f %(marker)s ]; then
+  printf '%%s' '{"message":"second attempt worked","verdict":"DONE"}' > "$out"; exit 0
 fi
-touch /tmp/duet-blip-done
+touch %(marker)s
 echo "Not logged in" >&2; exit 1
-''')
-    import os
-    try:
-        os.path.exists("/tmp/duet-blip-done") and os.unlink("/tmp/duet-blip-done")
-    except OSError:
-        pass
+''' % {"marker": marker})
     reply = agent.send("go")
-    try:
-        os.unlink("/tmp/duet-blip-done")
-    except OSError:
-        pass
     assert reply.ok, reply.error
     assert "second attempt worked" in reply.text
 

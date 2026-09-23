@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-397 tests, no network and no credentials required. `pytest -q` from a clean clone.
+398 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -1096,7 +1096,7 @@ Live check (Opus + Sonnet, a Redis rate-limiter plan, load average 200–450 fro
 unrelated Xcode builds): consensus in 8 rounds, 23.5 min. Both agents ran the suite
 before and after editing, and the lead used it to confirm that a 0.2s refill test
 passes with a margin of exactly zero, which a port to integer milliseconds would break.
-The rule check passed with `__pycache__` created by those runs. One refused call (a
+The rule check passed with `__pycache__` created by those runs — but only because the lead deleted `.pytest_cache` itself; see the head-to-head below. One refused call (a
 `find | xargs` listing) went to the peer as unverified and triggered no retry. No write
 was refused in this run, so the correction path is covered by tests, not by this run.
 
@@ -1122,6 +1122,28 @@ buggy path won). ECC's 3–4 min came from a different day's load, so read this 
 same order", not a head-to-head.
 
 ¹ in the README table: that run, not a benchmark.
+
+### `--quick` against ECC, same moment, same load
+
+A fresh task with its **answer key written first** ("add full and partial refunds to
+`orders.py`": float money, per-line discount rounding, tax rounded once, a cumulative
+refund cap, and a CSV header pinned by a test). Both tools were started at the same
+second on the same machine, so they shared the load. ECC was installed in its benchmark
+folder only, and removed afterwards. Graded blind twice, with the labels swapped.
+
+| | ECC `plan` | duet `plan --quick` |
+|---|---|---|
+| time | **5 min 23 s** | 5 min 59 s |
+| pitfalls found (blind, both orders) | 4/5 | 4/5 |
+| missed | float money | float money |
+
+**A tie on quality, and ECC 36 s faster.** duet's session also ended *not done*, because of
+a bug of mine: the plan rule counted `.pytest_cache/` as a changed file. So the first
+quick plan whose agents ran the suite was refused for running it. The earlier smoke run
+passed only because the lead happened to delete the cache itself, and I had checked the
+wrong ignore list. Fixed: the plan rule now uses the workspace's own ignore list, and a
+test covers it. The plan text above was graded as it stood; nothing was rerun.
+
 
 ## Install paths checked live
 

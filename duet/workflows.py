@@ -27,6 +27,8 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from duet.workspace import SKIP_DIRS as WORKSPACE_SKIP_DIRS
+
 # What a test file looks like, across the ecosystems duet detects gates for.
 TEST_GLOBS = (
     "test_*.py", "*_test.py", "*_test.go", "*.test.js", "*.test.ts",
@@ -34,8 +36,10 @@ TEST_GLOBS = (
     "*_spec.rb", "*Test.java", "*Tests.java", "*_test.rs", "*Test.kt",
 )
 TEST_DIRS = ("tests", "test", "spec", "__tests__")
-SKIP_DIRS = {".duet", ".git", "__pycache__", "node_modules", ".venv", "venv",
-             ".tox", "target", "dist", "build"}
+# The same list the workspace digest skips. Two lists drifted once: the plan rule
+# counted `.pytest_cache` as a changed file, so a plan session whose agents ran
+# the tests — which it now lets them do — was refused for it.
+SKIP_DIRS = WORKSPACE_SKIP_DIRS
 
 
 def _digest(path: Path) -> str:

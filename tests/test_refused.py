@@ -190,3 +190,11 @@ def test_quick_is_two_turns_and_says_so(tmp_path, monkeypatch):
     assert workflow_commands.run(args, "plan") == 0
     assert seen["rounds"] == 2 and "exactly two turns" in seen["task"][0]
     assert cli.build_config(args).workflow_state.get("quick") is True
+
+
+def test_running_the_tests_in_a_plan_session_does_not_break_the_plan_rule(tmp_path):
+    """Found live: the plan rule counted .pytest_cache as a changed file, so the
+    first quick plan whose agents ran the suite was refused for running it."""
+    run = envelope("ran the tests; plan written", "DONE", confidence=0.9,
+                   patches=[{"path": ".pytest_cache/v/cache/nodeids", "content": "[]\n"}])
+    assert quick(tmp_path, DRAFT, run).status == "consensus"

@@ -17,8 +17,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 SKIP_DIRS = {
     ".git", ".duet", "__pycache__", "node_modules", ".venv", "venv",
-    ".pytest_cache", ".mypy_cache", "dist", "build", ".next", "target",
-    ".idea", ".vscode", ".DS_Store",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis", ".tox",
+    "dist", "build", ".next", "target", ".idea", ".vscode", ".DS_Store",
 }
 DIGEST_CHUNK_BYTES = 1_048_576
 

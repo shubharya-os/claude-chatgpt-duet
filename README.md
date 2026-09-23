@@ -198,9 +198,9 @@ full method and every caveat in [docs/QA.md](docs/QA.md):
 | its own test suite | passes | hangs after 31 tests | duet |
 | planning, 5 planted pitfalls, graded blind | 4/5 and 5/5 | 4/5 and 5/5 | tie |
 | planning time, full debate | 8–10 min | **3–4 min** | **ECC** |
-| planning time, `duet plan --quick` (one draft, one review) | 4 min 48 s ¹ | 3–4 min | close |
+| planning, `duet plan --quick`, fresh key, run side by side | 4/5 in 5 min 59 s | 4/5 in **5 min 23 s** | ECC by 36 s |
 
-¹ One live run on a heavily loaded machine, not a head-to-head; the reviewer still caught a real contradiction. Details in [QA.md](docs/QA.md).
+`--quick` is one draft and one review, reported as *reviewed* unless both sign the same file. Details, including a bug that run exposed, in [QA.md](docs/QA.md).
 
 Switching without losing anything you rely on:
 
@@ -601,7 +601,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-397 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+398 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q
