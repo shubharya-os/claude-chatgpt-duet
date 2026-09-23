@@ -100,6 +100,10 @@ and how the finished thing will be verified. Argue about the plan with your
 peer the way you would argue about code. Where you disagree and cannot settle
 it, write both positions into PLAN.md rather than papering over it.
 
+Walk through the existing tests: for each one, say whether the plan keeps it
+passing and how. They are the behaviour you are changing, and the harness
+checks that every one is named in PLAN.md.%(tests)s
+
 Size the plan to the change. A two-line change needs a paragraph, not a
 document — a live session once produced 326 lines for one. If you are the
 reviewer and the plan is out of proportion to the work, that is an objection
@@ -173,7 +177,17 @@ def run(args, name: str) -> int:
             print(ui.dim("   gate  ") + effective)
         print(ui.dim("   rule  ") + RULES[name])
 
-    args.task = [TASKS[name] % {"what": what, "gate": effective or "(none — this is a plan)"}]
+    tests = ""
+    if name == "plan":
+        from duet.workflows import NAMED_TEST_LIMIT, test_names
+        names = test_names(root)
+        if names and len(names) <= NAMED_TEST_LIMIT:
+            tests = " They are:\n\n" + "\n".join("    - " + n for n in names)
+        elif names:
+            tests = (" There are %d of them — too many to name one by one, so give the"
+                     " existing tests a section of their own instead." % len(names))
+    args.task = [TASKS[name] % {"what": what, "gate": effective or "(none — this is a plan)",
+                                "tests": tests}]
     args.file = None
     return cli.cmd_run(args)
 

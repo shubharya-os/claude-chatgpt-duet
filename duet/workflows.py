@@ -190,6 +190,34 @@ def failed_only_on_imports(output: str) -> bool:
             and not any(sign in output for sign in ASSERTION_SIGNS))
 
 
+# How a test is named, per ecosystem — enough to list them, not to run them.
+TEST_NAME_PATTERNS = (
+    r"^\s*(?:async\s+)?def\s+(test_\w+)",            # Python
+    r"^func\s+(Test\w+)",                               # Go
+    r"\b(?:it|test)\(\s*['\"`]([^'\"`]{3,80})['\"`]",     # JS / TS
+    r"#\[test\]\s*(?:async\s+)?fn\s+(\w+)",             # Rust
+)
+# Past this many, naming every test in a plan is busywork rather than care.
+NAMED_TEST_LIMIT = 40
+
+
+def test_names(root: str) -> List[str]:
+    """The names of the tests that exist now, in file order, without duplicates."""
+    import re
+    base = Path(root).expanduser().resolve()
+    names: List[str] = []
+    for rel in sorted(test_files(root)):
+        try:
+            text = (base / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for pattern in TEST_NAME_PATTERNS:
+            for match in re.finditer(pattern, text, re.MULTILINE):
+                if match.group(1) not in names:
+                    names.append(match.group(1))
+    return names
+
+
 class Workflow:
     """A rule the pair is told, and a check that it was followed.
 
@@ -401,6 +429,7 @@ class Plan(Workflow):
 
     def begin(self, root: str, state: Dict) -> None:
         state.setdefault("baseline_files", all_files(root))
+        state.setdefault("test_names", test_names(root))
 
     def veto(self, root: str, state: Dict) -> Optional[str]:
         before = dict(state.get("baseline_files", {}))
@@ -415,15 +444,35 @@ class Plan(Workflow):
                 "revert them" % (self.OUTPUT, ", ".join(touched[:6]))
             )
         plan = Path(root).expanduser().resolve() / self.OUTPUT
-        if now_plan is None or not plan.read_text(encoding="utf-8", errors="replace").strip():
+        text = plan.read_text(encoding="utf-8", errors="replace") if now_plan is not None else ""
+        if not text.strip():
             problems.append("%s does not exist or is empty" % self.OUTPUT)
+        # The existing tests are the behaviour a change has to keep. A plan
+        # that never walks through them is a plan for new code, not a plan for
+        # changing this code — and in a head-to-head against another harness,
+        # both plans missed a pitfall sitting in a parametrised test neither
+        # had been made to read.
+        names = state.get("test_names") or []
+        if text.strip() and names:
+            if len(names) <= NAMED_TEST_LIMIT:
+                missing = [n for n in names if n not in text]
+                if missing:
+                    problems.append(
+                        "these existing tests are not accounted for in %s: %s — for each, "
+                        "say whether the plan keeps it passing and how"
+                        % (self.OUTPUT, ", ".join(missing[:12]) + (" …" if len(missing) > 12 else "")))
+            elif "existing test" not in text.lower():
+                problems.append("%s has no section on the existing tests (%d of them)"
+                                % (self.OUTPUT, len(names)))
         if not problems:
             return None
         return "Not a plan yet: " + "; ".join(problems) + ". Both sign-offs are cleared until then."
 
 
     def proven(self, state: Dict) -> str:
-        return "only PLAN.md changed; no code was touched"
+        n = len(state.get("test_names") or [])
+        tests = (", and all %d existing tests are accounted for" % n) if 0 < n <= NAMED_TEST_LIMIT else ""
+        return "only PLAN.md changed; no code was touched%s" % tests
 
 
 REGISTRY = {cls.name: cls for cls in (Fix, Add, Refactor, Plan)}

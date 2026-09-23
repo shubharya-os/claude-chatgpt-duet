@@ -265,7 +265,7 @@ def test_each_task_names_its_gate_and_states_its_rule():
         task = workflow_commands.TASKS[name] % {"what": "x", "gate": "pytest -q"}
         assert "pytest -q" in task, name
         assert "checked by the harness" in task, name
-    plan = workflow_commands.TASKS["plan"] % {"what": "x", "gate": ""}
+    plan = workflow_commands.TASKS["plan"] % {"what": "x", "gate": "", "tests": ""}
     assert "Only PLAN.md may change" in plan
 
 
@@ -291,7 +291,7 @@ def test_the_plan_task_asks_for_proportion():
     Neither pushed back on the scope, and the task gave them no reason to:
     it listed everything a plan should cover and nothing about size.
     """
-    task = workflow_commands.TASKS["plan"] % {"what": "x", "gate": ""}
+    task = workflow_commands.TASKS["plan"] % {"what": "x", "gate": "", "tests": ""}
     assert "Size the plan to the change" in task
 
 
@@ -317,3 +317,39 @@ def test_a_fix_whose_tests_only_fail_on_an_import_is_accepted_but_flagged(tmp_pa
     proven = [json.loads(l)["detail"] for l in path.read_text().splitlines()
               if json.loads(l).get("kind") == "workflow_proven"]
     assert proven and "only because they import" in proven[0]
+
+
+# -- plan: the existing tests have to be walked through --------------------------
+
+def test_a_plan_that_skips_an_existing_test_does_not_count(tmp_path):
+    """Both plans in a head-to-head missed a pitfall in a test neither had read."""
+    (tmp_path / "test_core.py").write_text(
+        "def test_adds():\n    pass\n\ndef test_rejects_bools():\n    pass\n")
+    partial = write("PLAN.md", "# plan\nKeep test_adds passing by leaving add() alone.\n")
+    _, result = run(tmp_path, [partial] + [DONE] * 6, [DONE] * 6, workflow="plan")
+    assert result.status != "consensus"
+    assert "workflow_veto" in kinds(result)
+
+
+def test_a_plan_that_accounts_for_every_test_counts(tmp_path):
+    (tmp_path / "test_core.py").write_text(
+        "def test_adds():\n    pass\n\ndef test_rejects_bools():\n    pass\n")
+    full = write("PLAN.md", "# plan\n- test_adds: unchanged.\n- test_rejects_bools: validate first.\n")
+    _, result = run(tmp_path, [full] + [DONE] * 3, [DONE] * 3, workflow="plan")
+    assert result.status == "consensus"
+
+
+def test_test_names_are_read_across_ecosystems(tmp_path):
+    (tmp_path / "test_a.py").write_text("def test_one():\n    pass\nasync def test_two():\n    pass\n")
+    (tmp_path / "x_test.go").write_text("func TestThree(t *testing.T) {}\n")
+    (tmp_path / "y.test.ts").write_text("it('handles the empty case', () => {})\n")
+    names = workflows.test_names(str(tmp_path))
+    assert {"test_one", "test_two", "TestThree", "handles the empty case"} <= set(names)
+
+
+def test_the_plan_task_hands_the_pair_the_test_names(tmp_path, capsys, monkeypatch):
+    (tmp_path / "test_core.py").write_text("def test_adds():\n    pass\n")
+    seen = {}
+    monkeypatch.setattr("duet.cli.cmd_run", lambda a: seen.setdefault("task", a.task[0]) and 0)
+    workflow_commands.run(args_for(tmp_path, what="move storage"), "plan")
+    assert "test_adds" in seen["task"]

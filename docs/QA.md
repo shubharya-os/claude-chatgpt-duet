@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-383 tests, no network and no credentials required. `pytest -q` from a clean clone.
+387 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -997,6 +997,35 @@ reviewer named. All 9 pass on the fixed code. The report was right down to the c
 
 What `-p` mode could not show: whether it announced the session *before* starting, as
 the block asks. Only the final message survives a non-interactive run.
+
+## Head-to-head with ECC: planning
+
+Same task, same model for ECC as for duet's lead (opus), ECC installed properly with its
+own agents and default hooks — but only inside the benchmark folder. Each plan was scored
+against **five pitfalls planted in the code, with the answer key written before either
+plan existed**. Grading was blind: a fresh session saw only "Plan A" and "Plan B" in
+shuffled order, had to quote the plan's own words for each point, and a point counted
+only if that quote was really in the file. Every comparison was graded twice, with the
+labels swapped.
+
+| | ECC `plan` | duet `plan` | notes |
+|---|---|---|---|
+| task 1 (ledger → SQLite across processes) | 4/5, 3m 54s | 4/5, 9m 55s | both missed the same pitfall; duet hit the 6-round cap I set, one turn from consensus |
+| **task 2, fresh key** (users → Postgres, hash passwords) | **5/5, 3m 13s** | **5/5, 8m 8s** | the one that counts |
+| task 1 again, after the fix below | 4/5 | 5/5, 23m 43s | **post-hoc** — the fix was designed after seeing task 1's key |
+
+**On these tasks duet did not plan better than ECC. It matched it, and took 2.5x as
+long.** That is the result, and it is recorded as one.
+
+What the first round showed was *why* both missed pitfall 3: it lived in a parametrised
+test (`qty=True` must be rejected, and SQLite would store it as 1) that nothing made
+either tool read. So `duet plan` now has to account for every existing test by name —
+the harness hands the pair the list and vetoes a plan that skips one. Rerun on task 1,
+duet's plan said it outright: "`isinstance(True, int)` is `True` and SQLite stores it as
+`1`, so the explicit `isinstance(qty, bool)` rejection must be" kept. But the fresh
+task hit a ceiling — both tools scored 5/5 — so it cannot show whether the rule helps on
+problems it was not built from. That needs a harder fresh benchmark, and not a series of
+new ones run until duet wins.
 
 ## Install paths checked live
 
