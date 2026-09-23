@@ -507,7 +507,13 @@ def test_the_default_block_tells_agents_inside_a_session_not_to_nest(tmp_path, c
 
 
 def test_gemini_and_opencode_get_duet_only_where_they_are_used(tmp_path, capsys):
-    import tomllib
+    # tomllib is 3.11+, and duet supports 3.9 — this test imported it
+    # unconditionally and turned CI red on both 3.9 jobs. The TOML is still
+    # parsed for real on 3.11 and 3.13; on older Pythons the shape is checked.
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        tomllib = None
     from duet import cli
 
     args = argparse.Namespace(action="install", dir=str(tmp_path), force=False,
@@ -520,9 +526,15 @@ def test_gemini_and_opencode_get_duet_only_where_they_are_used(tmp_path, capsys)
     (tmp_path / ".gemini").mkdir()
     (tmp_path / ".config" / "opencode").mkdir(parents=True)
     cli.cmd_skill(args)
-    toml = tomllib.loads((tmp_path / ".gemini" / "commands" / "duet.toml").read_text())
-    assert set(toml) == {"description", "prompt"}
-    assert "{{args}}" in toml["prompt"] and "$ARGUMENTS" not in toml["prompt"]
+    raw = (tmp_path / ".gemini" / "commands" / "duet.toml").read_text()
+    if tomllib is not None:
+        toml = tomllib.loads(raw)
+        assert set(toml) == {"description", "prompt"}
+        prompt = toml["prompt"]
+    else:
+        assert raw.count("\'\'\'") == 2 and "\ndescription = " in raw and "\nprompt = " in raw
+        prompt = raw.split("\'\'\'")[1]
+    assert "{{args}}" in prompt and "$ARGUMENTS" not in prompt
     opencode = (tmp_path / ".config" / "opencode" / "commands" / "duet.md").read_text()
     assert opencode.startswith("---\ndescription: ") and "$ARGUMENTS" in opencode
 
