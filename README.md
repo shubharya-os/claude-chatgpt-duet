@@ -38,6 +38,16 @@ duet review                                  # a second model reads your diff, r
 Each one states a rule and **checks it** against what actually happened — the gate the
 harness ran, the files on disk — rather than asking the agents whether they followed it.
 
+To have Claude Code (and Codex) reach for these on their own — for bug fixes, features
+and refactors, while questions and one-line edits stay direct — run it once:
+
+```bash
+duet skill default        # undo with: duet skill undefault
+```
+
+It writes one marked block into `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, touches
+nothing else in them, and says before each session that it is handing the work to duet.
+
 You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
 what Claude built. Paste it back to ChatGPT. "Looks good, but you missed the error
 case." Paste that into Claude Code. Repeat until you get bored and ship it.
@@ -473,6 +483,7 @@ duet verify          # does the last sign-off still hold? re-runs the gate
 duet login           # sign both sides in
 duet doctor          # real connection check, with the fix for each side
 duet skill install   # use duet from inside Claude Code
+duet skill default   # ...and make it the default for real code changes
 duet demo            # the whole loop offline — no keys, no network
 duet report          # the last session's report (--transcript for everything said)
 duet sessions        # every session in this workspace
@@ -528,7 +539,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-369 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+372 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

@@ -697,12 +697,94 @@ def _is_stale_duet_file(current: str, template: str) -> bool:
     return len(set(match.groups())) == 1
 
 
+DEFAULT_START = "<!-- duet:default:start — written by `duet skill default`; remove with `duet skill undefault` -->"
+DEFAULT_END = "<!-- duet:default:end -->"
+DEFAULT_TARGETS = [
+    # Claude Code reads ~/.claude/CLAUDE.md into every session, in every project.
+    ("Claude Code", Path(".claude") / "CLAUDE.md"),
+    # Codex reads ~/.codex/AGENTS.md the same way.
+    ("Codex", Path(".codex") / "AGENTS.md"),
+]
+
+
+def _without_block(text: str) -> str:
+    """The file with duet's block taken out, and nothing else changed."""
+    start, end = text.find(DEFAULT_START), text.find(DEFAULT_END)
+    if start == -1 or end == -1 or end < start:
+        return text
+    before = text[:start].rstrip("\n")
+    after = text[end + len(DEFAULT_END):].lstrip("\n")
+    if before and after:
+        return before + "\n\n" + after
+    return before + "\n" if before else after
+
+
+def cmd_skill_default(args: argparse.Namespace, enable: bool) -> int:
+    """Make duet the default for real code changes in every session, or stop.
+
+    A block between two markers in the user-level instructions file each
+    harness reads everywhere. Only the text between the markers is ever
+    written or removed, so whatever the user already keeps there survives
+    both directions, and running either twice changes nothing the second time.
+    """
+    home = Path(args.dir).expanduser() if args.dir else Path.home()
+    if enable:
+        # The block tells the model to use the skill, so the skill has to be
+        # there first — a default pointing at something missing is worse than none.
+        install = argparse.Namespace(**{**vars(args), "action": "install"})
+        code = cmd_skill(install)
+        if code != 0:
+            print(ui.red("✗ ") + "not making duet the default until the skill itself installs.")
+            return code
+        invocation, _ = duet_invocation_checked()
+        body = (skill_dir() / "default.md").read_text(encoding="utf-8").replace("{{DUET}}", invocation)
+        block = "%s\n%s\n%s\n" % (DEFAULT_START, body.strip(), DEFAULT_END)
+    print()
+    for label, relative in DEFAULT_TARGETS:
+        target = home / relative
+        try:
+            current = target.read_text(encoding="utf-8") if target.is_file() else ""
+        except OSError as exc:
+            print(ui.red("✗ ") + "%-12s could not read %s: %s" % (label, target, exc))
+            return 1
+        stripped = _without_block(current)
+        if enable:
+            updated = (stripped.rstrip("\n") + "\n\n" if stripped.strip() else "") + block
+        else:
+            updated = stripped
+        if updated == current:
+            print(ui.dim("· %-12s %s" % (label, "already so")))
+            continue
+        try:
+            if not updated.strip():
+                # The block was all there was — duet created the file, so the
+                # undo removes it rather than leaving an empty one behind.
+                target.unlink()
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(updated, encoding="utf-8")
+        except OSError as exc:
+            print(ui.red("✗ ") + "%-12s could not write %s: %s" % (label, target, exc))
+            return 1
+        print(ui.green("✓ ") + "%-12s %s  %s" % (label, "duet is the default" if enable else "back to normal",
+                                                   ui.dim(str(target))))
+    print()
+    if enable:
+        print("New sessions now hand real code changes to duet — fix, add, refactor,")
+        print("build, plan — and do questions and one-line edits directly. They say so")
+        print("before starting a session, so you can say no.")
+        print(ui.dim("undo: ") + ui.bold("duet skill undefault"))
+    return 0
+
+
 def cmd_skill(args: argparse.Namespace) -> int:
     """Install `/duet` into Claude Code and Codex, plus the Claude Code skill."""
     source_dir = skill_dir()
     invocation, invocation_verified = duet_invocation_checked()
     home = Path(args.dir).expanduser() if args.dir else Path.home()
 
+    if args.action in ("default", "undefault"):
+        return cmd_skill_default(args, enable=args.action == "default")
     if args.action == "path":
         print(source_dir)
         return 0
@@ -2162,8 +2244,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_skill = sub.add_parser("skill", help="install /duet into Claude Code and Codex")
     common(p_skill)
     p_skill.add_argument("action", nargs="?", default="install",
-                         choices=["install", "path", "show"],
-                         help="install it (default), print its source path, or print it")
+                         choices=["install", "path", "show", "default", "undefault"],
+                         help="install it (the default action), print its source path, print it, "
+                              "or make duet the default for real code changes in every "
+                              "session (default) and undo that (undefault)")
     p_skill.add_argument("--dir", metavar="HOME", help="treat this directory as home (for testing)")
     p_skill.add_argument("--force", action="store_true", help="overwrite an existing copy")
     p_skill.set_defaults(func=cmd_skill)

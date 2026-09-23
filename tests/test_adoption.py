@@ -445,3 +445,48 @@ def test_every_skill_discloses_a_same_vendor_fallback():
         text = skill_dir.joinpath(name).read_text()
         assert "Only have one of the two?" in text, name
         assert "Never present it as a cross-vendor second opinion" in text, name
+
+
+def _home(tmp_path):
+    return argparse.Namespace(action="default", dir=str(tmp_path), force=True,
+                              root=str(tmp_path), quiet=False, json=False)
+
+
+def test_default_writes_a_block_every_session_reads(tmp_path, capsys):
+    from duet import cli
+
+    assert cli.cmd_skill_default(_home(tmp_path), enable=True) == 0
+    claude_md = (tmp_path / ".claude" / "CLAUDE.md").read_text()
+    assert cli.DEFAULT_START in claude_md and cli.DEFAULT_END in claude_md
+    assert 'fix "<the bug>"' in claude_md and "{{DUET}}" not in claude_md
+    assert "Do it directly, without duet" in claude_md          # it is scoped, not total
+    # and the skill it points at is actually there
+    assert (tmp_path / ".claude" / "skills" / "duet" / "SKILL.md").is_file()
+    assert (tmp_path / ".codex" / "AGENTS.md").is_file()
+
+
+def test_default_keeps_what_you_already_had_and_undo_restores_it_exactly(tmp_path, capsys):
+    from duet import cli
+
+    mine = "# my rules\n\nalways use tabs\n"
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "CLAUDE.md").write_text(mine)
+
+    cli.cmd_skill_default(_home(tmp_path), enable=True)
+    both = (tmp_path / ".claude" / "CLAUDE.md").read_text()
+    assert both.startswith(mine.rstrip("\n")) and cli.DEFAULT_START in both
+
+    cli.cmd_skill_default(_home(tmp_path), enable=True)          # twice: no second block
+    assert (tmp_path / ".claude" / "CLAUDE.md").read_text().count(cli.DEFAULT_START) == 1
+
+    cli.cmd_skill_default(_home(tmp_path), enable=False)
+    assert (tmp_path / ".claude" / "CLAUDE.md").read_text() == mine
+
+
+def test_undo_removes_a_file_duet_created_rather_than_leaving_it_empty(tmp_path, capsys):
+    from duet import cli
+
+    cli.cmd_skill_default(_home(tmp_path), enable=True)
+    cli.cmd_skill_default(_home(tmp_path), enable=False)
+    assert not (tmp_path / ".claude" / "CLAUDE.md").exists()
+    assert not (tmp_path / ".codex" / "AGENTS.md").exists()
