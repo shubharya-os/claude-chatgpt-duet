@@ -912,6 +912,56 @@ That third run also produced two findings about duet:
   changed: widening what agents may execute is a change to the safety model, and it
   deserves its own decision rather than a fix in passing. Recorded as a known gap.
 
+## An app, not a tool: timed, then attacked
+
+Everything before this was a single tool — a CLI, a small service. The claim that
+matters is apps, so the brief was made app-shaped and deliberately hard:
+
+> a personal expense tracker web app — a stdlib Python server serving a single-page
+> HTML/JS UI and a JSON API; add, list, delete, monthly totals per category, CSV export;
+> SQLite persistence; validate every input server-side, correct status codes, no crash
+> on any malformed request, safe against SQL injection and HTML injection, bind to
+> 127.0.0.1 by default.
+
+`claude:opus+claude:sonnet`, empty directory, `duet build`.
+
+**34 minutes 57 seconds. 6 rounds. Consensus.** 22 files, 2,963 lines: `server.py`,
+`store.py`, `validation.py`, a static UI, 10 test files, and a 51-criterion
+`ACCEPTANCE.md`.
+
+The spec opens with two sections that exist because of earlier sessions in this
+document: **§0 "Environment the criteria assume"** (after a CLI crashed on Python 3.9)
+and **§1 "Defaults (the things nothing else would check)"** (after a service shipped
+on `0.0.0.0` with nobody discussing it). Its first criterion is "binds 127.0.0.1 and
+nothing else." It also added a defence the brief never asked for: CSV formula injection.
+
+Then it was attacked — against the running server and in a real browser, not through
+its own suite:
+
+| attack | result |
+|---|---|
+| its own suite on 3.12, and on **3.9** | pass, pass |
+| listening address | `127.0.0.1` only |
+| `x'); DROP TABLE expenses;--` as a category | stored as text; table intact |
+| `=cmd\|/c calc!A1` exported to CSV | written as `'=cmd\|…`, defused |
+| not JSON, `NaN`, 3 decimal places, Feb 30, unknown field | 400 each |
+| wrong content type, 70 KB body, deleting a missing id, month 13 | 415, 413, 404, 400 |
+| `0.1` + `0.2` | total `"0.30"`, exactly |
+| 30 simultaneous writes, then a restart | all 36 rows present |
+| `<img src=x onerror=alert(1)>` and `<script>` in stored data, **loaded in a browser** | 0 injected elements; both rendered as literal text |
+| external resources loaded by the page | none |
+| add an expense through the form | row appears, total +7.25 exactly, **no page reload** |
+| submit `abc` as the amount | the server's message is shown: *"amount must look like 12.34, with at most 2 decimal places"* |
+
+The last row is recorded because the screenshot said otherwise: it showed an empty,
+focused amount field and a stale category, which looked like the submit had not
+happened. The DOM said the field held `abc` and the error was on the page. The
+screenshot was the thing that was wrong.
+
+What this does not show: it is one app, built once, by one pair. It is not a claim
+that every app comes out like this, and nothing here was load-tested beyond thirty
+concurrent writes.
+
 ## Install paths checked live
 
 | path | result |

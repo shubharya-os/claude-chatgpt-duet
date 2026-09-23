@@ -194,7 +194,15 @@ suite: correct status codes on every unhappy path, codes surviving a restart, an
 parallel identical POSTs producing exactly one `201` and thirty-nine `200`s. It also
 passes on Python 3.9, which the previous session's artifact did not.
 
-The same brief given to `claude:sonnet+claude:sonnet` finished in **13m 37s** — and
+**An app, not just a tool:** a personal expense tracker — stdlib server, single-page UI,
+JSON API, SQLite, CSV export, "safe against SQL injection and HTML injection" — reached a
+double sign-off in **34m 57s**: 22 files, 2,963 lines, 10 test files. Attacked afterwards
+by hand, in a real browser as well as over HTTP: SQL injection stored as text, stored XSS
+rendered as literal text with zero injected elements, CSV formula injection defused,
+`0.1 + 0.2` totalled to exactly `0.30`, 30 concurrent writes all surviving a restart, and
+every malformed request answered with the right status code.
+
+The same URL-shortener brief given to `claude:sonnet+claude:sonnet` finished in **13m 37s** — and
 wrote a spec a third the size, with sequential (enumerable) short codes and no URL
 deduplication, both of which its own criteria permit. Neither pair broke its rules.
 The double sign-off guarantees the criteria are met; it does not choose the criteria,
