@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-362 tests, no network and no credentials required. `pytest -q` from a clean clone.
+365 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -875,6 +875,43 @@ The honest boundary: duet replaces ECC's orchestration workflows (build, fix, ad
 refactor, plan, review), and checks their rules where ECC states them. It does not
 replace ECC's ~300 domain skills, and does not try to.
 
+## `/duet` from inside Claude Code, with ChatGPT out of quota
+
+The path people actually use is `/duet` in a Claude Code session, and its default pair
+needs ChatGPT — whose quota on this machine ran out on 2026-09-19. Driven the way a
+user would, three times:
+
+**1. It did not dead-end, but it did not say what it did.** The skill said to run
+`doctor` and report the fix. The model inside `/duet` went further: it found the
+one-subscription command duet prints and ran it — two Claude models. Then it told the
+user the session was running and never mentioned that the "second opinion" was Claude
+reviewing Claude. Someone weighing that verdict would take it as cross-vendor. The skill
+now requires running the fallback *and* saying so before the result, and a test pins
+that in all four skill files.
+
+**2. Plain English routes to the right workflow.** "`/duet initials() crashes with
+IndexError when the name has two spaces in a row`" — no command named — started a
+`fix` session.
+
+**3. With the fix in place, it disclosed, and said why it matters:**
+
+> Caveat on the verdict, again: this was Opus vs. Sonnet, not Claude vs. ChatGPT. …
+> Two Claude models reinforced each other's thoroughness instead of one of them saying
+> "this is a toy repo, just make the change." A cross-vendor pair might have pushed
+> back on the scope; a same-family pair didn't.
+
+That third run also produced two findings about duet:
+
+- **A 326-line plan for a two-line edit.** The `plan` task listed everything a plan
+  should cover and said nothing about size, so a same-family pair gave the toy request
+  the full treatment. It now asks for a plan sized to the change, and tells the
+  reviewer that thoroughness nobody needed is worth objecting to.
+- **Agents in a `plan` session cannot run code.** duet scopes each agent's shell to the
+  gate's own commands, and a plan has no gate, so both agents "hit an approval gate
+  trying to run Python" and reasoned about behaviour they could have checked. Not
+  changed: widening what agents may execute is a change to the safety model, and it
+  deserves its own decision rather than a fix in passing. Recorded as a known gap.
+
 ## Install paths checked live
 
 | path | result |
@@ -890,6 +927,8 @@ replace ECC's ~300 domain skills, and does not try to.
   duet builds is self-contained, so a dropped session costs context, not correctness.
 - Two models can still be wrong together. The double sign-off raises the floor; the
   acceptance gate is what keeps it honest.
+- **Agents in a `plan` session cannot execute code.** Their shell is scoped to the
+  gate, and a plan has none. See the `/duet` section above.
 - **The gate only proves what it runs.** It runs one command, on one machine, with
   one interpreter. The greenfield session above ended in consensus on a CLI that
   crashes on Python 3.9, because the gate ran on 3.12 and the criteria never named a

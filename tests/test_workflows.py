@@ -283,3 +283,13 @@ def test_a_met_rule_is_announced_with_what_it_proved(tmp_path):
     proven = [json.loads(l) for l in path.read_text().splitlines()
               if json.loads(l).get("kind") == "workflow_proven"]
     assert proven and "fail on the original code" in proven[0]["detail"]
+
+
+def test_the_plan_task_asks_for_proportion():
+    """Two Claude models wrote a 326-line plan for a two-line edit.
+
+    Neither pushed back on the scope, and the task gave them no reason to:
+    it listed everything a plan should cover and nothing about size.
+    """
+    task = workflow_commands.TASKS["plan"] % {"what": "x", "gate": ""}
+    assert "Size the plan to the change" in task

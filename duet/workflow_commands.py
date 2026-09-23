@@ -98,7 +98,12 @@ A plan worth having says: what changes and in what order; what could go wrong
 at each step and how you would know; what you are deliberately leaving out;
 and how the finished thing will be verified. Argue about the plan with your
 peer the way you would argue about code. Where you disagree and cannot settle
-it, write both positions into PLAN.md rather than papering over it.""",
+it, write both positions into PLAN.md rather than papering over it.
+
+Size the plan to the change. A two-line change needs a paragraph, not a
+document — a live session once produced 326 lines for one. If you are the
+reviewer and the plan is out of proportion to the work, that is an objection
+worth raising; thoroughness nobody needed is a cost, not a virtue.""",
 }
 
 USAGE = {
