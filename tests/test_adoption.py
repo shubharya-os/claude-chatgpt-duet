@@ -490,3 +490,74 @@ def test_undo_removes_a_file_duet_created_rather_than_leaving_it_empty(tmp_path,
     cli.cmd_skill_default(_home(tmp_path), enable=False)
     assert not (tmp_path / ".claude" / "CLAUDE.md").exists()
     assert not (tmp_path / ".codex" / "AGENTS.md").exists()
+
+
+def test_the_default_block_tells_agents_inside_a_session_not_to_nest(tmp_path, capsys):
+    """duet's own agents load ~/.claude/CLAUDE.md like any other session.
+
+    Unchecked, the block that says "hand real changes to duet" would tell an
+    agent already inside a duet session to start another one. The live run
+    did not try — but that should not depend on luck.
+    """
+    from duet import cli
+
+    cli.cmd_skill_default(_home(tmp_path), enable=True)
+    text = (tmp_path / ".claude" / "CLAUDE.md").read_text()
+    assert "already one of the two agents inside a duet session" in text
+
+
+def test_gemini_and_opencode_get_duet_only_where_they_are_used(tmp_path, capsys):
+    import tomllib
+    from duet import cli
+
+    args = argparse.Namespace(action="install", dir=str(tmp_path), force=False,
+                              root=str(tmp_path), quiet=False, json=False)
+    cli.cmd_skill(args)
+    # neither harness has been used here, so neither gets a directory made for it
+    assert not (tmp_path / ".gemini").exists()
+    assert not (tmp_path / ".config" / "opencode").exists()
+
+    (tmp_path / ".gemini").mkdir()
+    (tmp_path / ".config" / "opencode").mkdir(parents=True)
+    cli.cmd_skill(args)
+    toml = tomllib.loads((tmp_path / ".gemini" / "commands" / "duet.toml").read_text())
+    assert set(toml) == {"description", "prompt"}
+    assert "{{args}}" in toml["prompt"] and "$ARGUMENTS" not in toml["prompt"]
+    opencode = (tmp_path / ".config" / "opencode" / "commands" / "duet.md").read_text()
+    assert opencode.startswith("---\ndescription: ") and "$ARGUMENTS" in opencode
+
+
+def test_default_never_creates_the_opencode_file_that_would_shadow_claude_md(tmp_path, capsys):
+    """OpenCode reads ~/.claude/CLAUDE.md only when its own AGENTS.md is absent.
+
+    Creating that file to add duet's block would silently cut OpenCode off
+    from every other rule in CLAUDE.md. Absent, it already sees duet's block
+    through the fallback — so duet leaves it absent.
+    """
+    from duet import cli
+
+    (tmp_path / ".config" / "opencode").mkdir(parents=True)
+    (tmp_path / ".gemini").mkdir()
+    cli.cmd_skill_default(_home(tmp_path), enable=True)
+    assert not (tmp_path / ".config" / "opencode" / "AGENTS.md").exists()
+    assert cli.DEFAULT_START in (tmp_path / ".gemini" / "GEMINI.md").read_text()
+
+    (tmp_path / ".config" / "opencode" / "AGENTS.md").write_text("# my opencode rules\n")
+    cli.cmd_skill_default(_home(tmp_path), enable=True)
+    assert cli.DEFAULT_START in (tmp_path / ".config" / "opencode" / "AGENTS.md").read_text()
+
+
+def test_project_mode_writes_the_repositorys_agents_md_for_cursor(tmp_path, capsys):
+    from duet import cli
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "AGENTS.md").write_text("# house rules\n")
+    args = _home(tmp_path)
+    args.project, args.root = True, str(repo)
+    cli.cmd_skill_default(args, enable=True)
+    text = (repo / "AGENTS.md").read_text()
+    assert text.startswith("# house rules") and cli.DEFAULT_START in text
+    assert not (tmp_path / ".claude" / "CLAUDE.md").exists()   # the home dir untouched
+    cli.cmd_skill_default(args, enable=False)
+    assert (repo / "AGENTS.md").read_text() == "# house rules\n"

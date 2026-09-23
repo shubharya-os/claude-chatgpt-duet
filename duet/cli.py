@@ -719,6 +719,27 @@ def _without_block(text: str) -> str:
     return before + "\n" if before else after
 
 
+def _default_targets(args: argparse.Namespace, home: Path):
+    """Which instruction files get duet's block, as (label, absolute path)."""
+    if getattr(args, "project", False):
+        # Cursor keeps its user rules in a settings screen, not a file — but it
+        # reads a project's AGENTS.md, as do Codex, OpenCode and most newer
+        # agents. One file in the repository reaches all of them.
+        return [("this project", Path(args.root).expanduser().resolve() / "AGENTS.md")]
+    targets = [(label, home / relative) for label, relative in DEFAULT_TARGETS]
+    if (home / ".gemini").is_dir():
+        # Shared by Gemini CLI and Google Antigravity: both read global rules here.
+        targets.append(("Gemini + Antigravity", home / ".gemini" / "GEMINI.md"))
+    opencode = home / ".config" / "opencode" / "AGENTS.md"
+    # Only if it already exists. OpenCode reads ~/.claude/CLAUDE.md *instead*
+    # when this file is absent — so creating it to add duet would silently
+    # stop OpenCode reading every other rule the user keeps there. Absent, it
+    # already gets duet's block through that fallback.
+    if opencode.is_file():
+        targets.append(("OpenCode", opencode))
+    return targets
+
+
 def cmd_skill_default(args: argparse.Namespace, enable: bool) -> int:
     """Make duet the default for real code changes in every session, or stop.
 
@@ -740,8 +761,7 @@ def cmd_skill_default(args: argparse.Namespace, enable: bool) -> int:
         body = (skill_dir() / "default.md").read_text(encoding="utf-8").replace("{{DUET}}", invocation)
         block = "%s\n%s\n%s\n" % (DEFAULT_START, body.strip(), DEFAULT_END)
     print()
-    for label, relative in DEFAULT_TARGETS:
-        target = home / relative
+    for label, target in _default_targets(args, home):
         try:
             current = target.read_text(encoding="utf-8") if target.is_file() else ""
         except OSError as exc:
@@ -775,6 +795,73 @@ def cmd_skill_default(args: argparse.Namespace, enable: bool) -> int:
         print("before starting a session, so you can say no.")
         print(ui.dim("undo: ") + ui.bold("duet skill undefault"))
     return 0
+
+
+DERIVED_MARK = "written by `duet skill install`"
+
+
+def _command_body(invocation: str) -> tuple:
+    """(description, body) of the /duet command, from the one Claude Code source.
+
+    Other harnesses get the same instructions rather than a copy that drifts:
+    only the argument placeholder and the metadata around it differ.
+    """
+    text = (skill_dir() / "claude-command.md").read_text(encoding="utf-8").replace("{{DUET}}", invocation)
+    _, _, rest = text.partition("---\n")
+    front, _, body = rest.partition("---\n")
+    description = ""
+    for line in front.splitlines():
+        if line.startswith("description:"):
+            description = line.split(":", 1)[1].strip()
+    return description, body.lstrip("\n")
+
+
+def _gemini_command(invocation: str) -> str:
+    description, body = _command_body(invocation)
+    body = body.replace("$ARGUMENTS", "{{args}}")
+    # A TOML multi-line *literal* string: no escapes are processed, so the
+    # body goes in byte for byte — it just cannot contain three quotes itself.
+    assert "\'\'\'" not in body, "command body would end the TOML literal early"
+    return ("# %s — Gemini CLI reads this as the /duet command.\n"
+            "description = %s\n"
+            "prompt = \'\'\'\n%s\'\'\'\n") % (DERIVED_MARK, json.dumps(description), body)
+
+
+def _opencode_command(invocation: str) -> str:
+    description, body = _command_body(invocation)
+    return "---\ndescription: %s\n---\n<!-- %s -->\n\n%s" % (description, DERIVED_MARK, body)
+
+
+# Harnesses that get /duet only if they are already in use here: a config
+# directory for a tool the user has never run is clutter, not support.
+DERIVED_TARGETS = [
+    ("Gemini CLI /duet", Path(".gemini"), Path(".gemini") / "commands" / "duet.toml", _gemini_command),
+    ("OpenCode /duet", Path(".config") / "opencode",
+     Path(".config") / "opencode" / "commands" / "duet.md", _opencode_command),
+]
+
+
+def _install_derived(home: Path, invocation: str, force: bool, installed, skipped, failed) -> None:
+    for label, harness, relative, build in DERIVED_TARGETS:
+        if not (home / harness).is_dir():
+            continue
+        target = home / relative
+        body = build(invocation)
+        if target.is_file():
+            current = target.read_text(encoding="utf-8", errors="replace")
+            if current == body:
+                skipped.append((label, target, "already up to date"))
+                continue
+            if not force and DERIVED_MARK not in current:
+                failed.append((label, target, "a different version is already there"))
+                continue
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body, encoding="utf-8")
+        except OSError as exc:
+            failed.append((label, target, str(exc)))
+            continue
+        installed.append((label, target, "so you can type /duet in %s" % label.split(" /")[0]))
 
 
 def cmd_skill(args: argparse.Namespace) -> int:
@@ -818,6 +905,8 @@ def cmd_skill(args: argparse.Namespace) -> int:
             failed.append((label, target, str(exc)))
             continue
         installed.append((label, target, why))
+
+    _install_derived(home, invocation, args.force, installed, skipped, failed)
 
     for label, target, why in installed:
         print(ui.green("✓ ") + "%-20s %s" % (label, ui.dim(str(target))))
@@ -2250,6 +2339,9 @@ def build_parser() -> argparse.ArgumentParser:
                               "session (default) and undo that (undefault)")
     p_skill.add_argument("--dir", metavar="HOME", help="treat this directory as home (for testing)")
     p_skill.add_argument("--force", action="store_true", help="overwrite an existing copy")
+    p_skill.add_argument("--project", action="store_true",
+                         help="with default/undefault: this project's AGENTS.md instead of your "
+                              "home directory — for Cursor, and any agent that reads AGENTS.md")
     p_skill.set_defaults(func=cmd_skill)
 
     p_demo = sub.add_parser("demo", help="run the full loop with scripted agents (no keys, no network)")

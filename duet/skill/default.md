@@ -1,5 +1,9 @@
 ## duet is the default for real code changes
 
+*If you are already one of the two agents inside a duet session, ignore this
+section entirely and do the work yourself — starting another session from inside
+one is refused, and only costs you the turn.*
+
 For a real change to code in a project that has tests, hand it to **duet** rather
 than working alone: a second model checks the work, and the harness checks the rule
 each workflow is held to. Use the `duet` skill, or run it directly:

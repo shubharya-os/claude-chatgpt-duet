@@ -45,8 +45,20 @@ and refactors, while questions and one-line edits stay direct — run it once:
 duet skill default        # undo with: duet skill undefault
 ```
 
-It writes one marked block into `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, touches
-nothing else in them, and says before each session that it is handing the work to duet.
+It writes one marked block into each harness's global instructions, touches nothing
+else in them, and says before each session that it is handing the work to duet:
+
+| harness | where | `/duet` command |
+|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` | ✓ |
+| Codex | `~/.codex/AGENTS.md` | `$duet` |
+| Gemini CLI and Google Antigravity | `~/.gemini/GEMINI.md` (they share it) | ✓ Gemini CLI |
+| OpenCode | its own `AGENTS.md` if you have one — otherwise it already reads `CLAUDE.md` | ✓ |
+| Cursor, and anything else that reads `AGENTS.md` | `duet skill default --project` writes the repository's | — |
+
+Only harnesses you already use get files. OpenCode's `AGENTS.md` is never *created*,
+because OpenCode reads `~/.claude/CLAUDE.md` only while that file is absent — creating it
+would quietly cut OpenCode off from the rest of your rules.
 
 You already do this by hand. Ask ChatGPT for a plan. Paste it into Claude Code. Copy
 what Claude built. Paste it back to ChatGPT. "Looks good, but you missed the error
@@ -539,7 +551,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-372 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+376 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q
