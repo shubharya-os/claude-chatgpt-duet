@@ -143,6 +143,7 @@ def turn_prompt(
     directive: str = "",
     files: Optional[Dict[str, str]] = None,
     patch_log: Optional[Sequence[str]] = None,
+    peer_refused: Optional[Sequence[str]] = None,
 ) -> str:
     parts: List[str] = []
 
@@ -167,6 +168,14 @@ def turn_prompt(
         )
     else:
         parts.append("\n=== YOUR PEER HAS NOT SPOKEN YET ===\nYou open the session.")
+    if peer_refused:
+        parts.append(
+            "\n=== WHAT %s TRIED THAT THE PERMISSION MODE REFUSED ===\n"
+            "These calls did not run. Anything in the message above that depends on\n"
+            "them — a test result, a command's output — is unverified; check it\n"
+            "yourself rather than take it as seen.\n%s"
+            % (peer.upper(), "\n".join("- %s" % c for c in peer_refused))
+        )
 
     parts.append(
         "\n=== OPEN AGAINST YOU (fix, or argue down with a reason) ===\n%s"
@@ -268,6 +277,20 @@ would catch:
 
 If it holds up, vote DONE and the session ends. If it does not, raise the issue
 with the fix and vote CONTINUE — that is not a failure, it is the job.
+"""
+
+REFUSED_WRITES_DIRECTIVE = """\
+BEFORE YOUR PEER SEES THIS — the harness saw these calls from your last reply
+refused by the permission mode, so they did not happen:
+
+{calls}
+
+{state} If your reply describes a change those calls would have made, it is
+not in the workspace. Make it now with the Edit or Write tool, which are
+permitted, or take the claim out. {commands}
+
+Then send your whole reply again, ending with the envelope. It replaces the one
+above; your peer only ever sees this one.
 """
 
 HANDOFF_DIRECTIVE = """\

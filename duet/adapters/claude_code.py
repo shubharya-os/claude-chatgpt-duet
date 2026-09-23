@@ -152,6 +152,26 @@ class ClaudeCodeAdapter(Adapter):
             return payload[-1] if payload and isinstance(payload[-1], dict) else {}
         return payload if isinstance(payload, dict) else {}
 
+    @staticmethod
+    def _refused(denials: Any) -> List[str]:
+        """`Bash: pytest -q`, `Edit: PLAN.md` — one line per call the permission mode stopped.
+
+        The CLI reports these itself. Without them the harness only sees the
+        agent's account of its turn, and an agent whose edit was refused can
+        still write "fixed it" — which its peer then spends a whole turn
+        discovering is not in the file.
+        """
+        lines: List[str] = []
+        for item in denials if isinstance(denials, list) else []:
+            if not isinstance(item, dict):
+                continue
+            tool = str(item.get("tool_name") or "tool")
+            data = item.get("tool_input") if isinstance(item.get("tool_input"), dict) else {}
+            target = data.get("command") or data.get("file_path") or data.get("notebook_path") or ""
+            target = " ".join(str(target).split())
+            lines.append(("%s: %s" % (tool, target) if target else tool)[:240])
+        return lines
+
     def send(self, prompt: str, system: str = "", round_no: int = 0) -> AgentReply:
         cmd = self._command(prompt, system)
         try:
@@ -204,6 +224,9 @@ class ClaudeCodeAdapter(Adapter):
             "duration_ms": data.get("duration_ms"),
             "num_turns": data.get("num_turns"),
         }
+        refused = self._refused(data.get("permission_denials"))
+        if refused:
+            meta["refused"] = refused
         if data.get("is_error") or proc.returncode != 0:
             detail = str(data.get("error") or text or stderr or "claude exited %d" % proc.returncode)
             if "not logged in" in detail.lower() or "/login" in detail.lower():

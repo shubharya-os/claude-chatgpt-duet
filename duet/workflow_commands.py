@@ -102,7 +102,7 @@ it, write both positions into PLAN.md rather than papering over it.
 
 Walk through the existing tests: for each one, say whether the plan keeps it
 passing and how. They are the behaviour you are changing, and the harness
-checks that every one is named in PLAN.md.%(tests)s
+checks that every one is named in PLAN.md.%(tests)s%(run)s
 
 Size the plan to the change. A two-line change needs a paragraph, not a
 document — a live session once produced 326 lines for one. If you are the
@@ -148,6 +148,10 @@ def run(args, name: str) -> int:
         # pass" would be a strange thing to make a plan wait on.
         args.gate, args.no_gate = None, True
         effective = ""
+        # Not a gate, but the agents may run it: a plan whose claims about the
+        # tests were checked beats one traced by hand, which is what both
+        # agents were reduced to when no command was allowed at all.
+        args.allow_run = cli.load_config(root).gate or cli.gate_detect.detect(root) or ""
     else:
         configured = cli.load_config(root).gate
         effective = args.gate or configured or cli.gate_detect.detect(root) or ""
@@ -186,8 +190,13 @@ def run(args, name: str) -> int:
         elif names:
             tests = (" There are %d of them — too many to name one by one, so give the"
                      " existing tests a section of their own instead." % len(names))
+    run = ""
+    if name == "plan" and getattr(args, "allow_run", ""):
+        run = ("\n\nYou can run them: `%s` is allowed, and it is the only command that"
+               " is. Run it to settle a claim about what the tests do rather than"
+               " tracing it by hand." % args.allow_run)
     args.task = [TASKS[name] % {"what": what, "gate": effective or "(none — this is a plan)",
-                                "tests": tests}]
+                                "tests": tests, "run": run}]
     args.file = None
     return cli.cmd_run(args)
 

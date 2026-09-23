@@ -227,6 +227,8 @@ def build_config(args: argparse.Namespace) -> Config:
         cfg.commit = True
     if getattr(args, "workflow", ""):
         cfg.workflow = args.workflow
+    if getattr(args, "allow_run", ""):
+        cfg.allow_run = args.allow_run
     if getattr(args, "accept", None):
         cfg.acceptance = args.accept
     if getattr(args, "accept_file", None):

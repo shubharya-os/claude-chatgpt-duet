@@ -132,6 +132,9 @@ class Config:
     gate: str = ""
     gate_was_detected: bool = False
     gate_timeout: int = 900
+    # A command the agents may run that is not the gate: the project's tests,
+    # for a session (a plan) whose finish line is not a green test run.
+    allow_run: str = ""
     max_rounds: int = 12
     max_debate: int = 3
     stall_limit: int = 3

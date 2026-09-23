@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-387 tests, no network and no credentials required. `pytest -q` from a clean clone.
+392 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -1068,6 +1068,44 @@ row still written, and it is not counted.
 apps are indistinguishable; the differences are time to a finished, agreed result and
 behaviour under a connection burst. Planning, above, was a tie — and ECC was faster there.
 
+## Where planning time goes, and two fixes that are not a speed-up
+
+ECC planned 2.5× faster in both head-to-heads, so the three `duet plan` logs were
+read turn by turn before changing anything.
+
+- **Most extra rounds were real catches.** A test fixture whose `ROLLBACK` undid
+  nothing because each call committed on its own pooled connection; a `CHECK (qty > 0)`
+  that made exact removal raise; a `TEST_DATABASE_URL` guard that never tied the
+  app's own `DATABASE_URL` to it. Each cost a round, and each is a bug in the plan.
+- **Two rounds in one run were waste.** The lead said it had fixed PLAN.md twice, and
+  the workspace digest before and after its turn was identical. Both times the peer
+  spent its whole turn grepping for an edit that was never made.
+- **Every plan agent traced tests by hand**, because `duet plan` has no gate and Bash
+  was only granted for the gate's commands.
+
+Fixes:
+
+1. The Claude adapter reads the CLI's own `permission_denials`. A refused call that
+   would have written a file (Edit/Write, or a shell write) gets put back to the same
+   agent in the same round, in its resumed session, before the peer sees the claim.
+   Any other refused call (a test run, say) reaches the peer marked unverified.
+2. `duet plan` detects the project's test command and allows exactly that. It is not
+   a gate; nothing waits on it being green.
+
+Live check (Opus + Sonnet, a Redis rate-limiter plan, load average 200–450 from
+unrelated Xcode builds): consensus in 8 rounds, 23.5 min. Both agents ran the suite
+before and after editing, and the lead used it to confirm that a 0.2s refill test
+passes with a margin of exactly zero, which a port to integer milliseconds would break.
+The rule check passed with `__pycache__` created by those runs. One refused call (a
+`find | xargs` listing) went to the peer as unverified and triggered no retry. No write
+was refused in this run, so the correction path is covered by tests, not by this run.
+
+**Not a speed-up.** This run was not faster than the earlier ones, and rounds 3–6
+each made a real catch (a monkeypatch that cannot reach a Redis server, a
+"passes on both backends" contradiction, a stale function reference). Two agents
+cost at least two turns, and that is the price of the catches. If a first read is
+all you need, `duet review` is one agent, one pass.
+
 ## Install paths checked live
 
 | path | result |
@@ -1083,8 +1121,9 @@ behaviour under a connection burst. Planning, above, was a tie — and ECC was f
   duet builds is self-contained, so a dropped session costs context, not correctness.
 - Two models can still be wrong together. The double sign-off raises the floor; the
   acceptance gate is what keeps it honest.
-- **Agents in a `plan` session cannot execute code.** Their shell is scoped to the
-  gate, and a plan has none. See the `/duet` section above.
+- **Agents in a `plan` session can run the project's tests and nothing else.** The
+  detected test command is allowed; any other command (a `sqlite3` probe, a script)
+  is still refused, and the peer is told so.
 - **The gate only proves what it runs.** It runs one command, on one machine, with
   one interpreter. The greenfield session above ended in consensus on a CLI that
   crashes on Python 3.9, because the gate ran on 3.12 and the criteria never named a

@@ -265,7 +265,7 @@ def test_each_task_names_its_gate_and_states_its_rule():
         task = workflow_commands.TASKS[name] % {"what": "x", "gate": "pytest -q"}
         assert "pytest -q" in task, name
         assert "checked by the harness" in task, name
-    plan = workflow_commands.TASKS["plan"] % {"what": "x", "gate": "", "tests": ""}
+    plan = workflow_commands.TASKS["plan"] % {"what": "x", "gate": "", "tests": "", "run": ""}
     assert "Only PLAN.md may change" in plan
 
 
@@ -291,7 +291,7 @@ def test_the_plan_task_asks_for_proportion():
     Neither pushed back on the scope, and the task gave them no reason to:
     it listed everything a plan should cover and nothing about size.
     """
-    task = workflow_commands.TASKS["plan"] % {"what": "x", "gate": "", "tests": ""}
+    task = workflow_commands.TASKS["plan"] % {"what": "x", "gate": "", "tests": "", "run": ""}
     assert "Size the plan to the change" in task
 
 

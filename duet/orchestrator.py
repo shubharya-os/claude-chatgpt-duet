@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -29,6 +30,28 @@ STATUS_EXHAUSTED = "exhausted"
 STATUS_BLOCKED = "blocked"
 STATUS_ERROR = "error"
 STATUS_INTERRUPTED = "interrupted"
+
+# A refused call that would have changed a file. An agent whose edit was
+# refused can still write "fixed it"; in a live `duet plan` run that cost two
+# rounds, each spent by the peer grepping for a change that was never made.
+WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+_HARMLESS_REDIRECT = re.compile(r"\d*>&\d|&?\d*>\s*/dev/null")
+_WRITING_COMMAND = re.compile(
+    r">|\btee\b|\bsed\s+-i|\bperl\s+-\w*i|\b(?:mv|cp|rm|touch|mkdir|patch|truncate)\s"
+    r"|\bgit\s+(?:apply|checkout|restore|am)\b|write_text|\bopen\([^)]*['\"][wax]"
+)
+
+
+def refused_writes(refused: Sequence[str]) -> List[str]:
+    """The refused calls, among `Tool: target` lines, that would have written a file."""
+    out: List[str] = []
+    for line in refused:
+        tool, _, target = line.partition(": ")
+        if tool in WRITE_TOOLS:
+            out.append(line)
+        elif tool == "Bash" and _WRITING_COMMAND.search(_HARMLESS_REDIRECT.sub("", target)):
+            out.append(line)
+    return out
 
 
 def rounds_taken(data: Dict[str, Any]) -> int:
@@ -110,6 +133,7 @@ class Orchestrator:
         self.pending_directive: Dict[str, str] = {}
         self.pending_reads: Dict[str, List[str]] = {}
         self.pending_patch_log: Dict[str, List[str]] = {}
+        self.pending_refused: Dict[str, List[str]] = {}
         self.last_envelope: Dict[str, Envelope] = {}
         self._gate_cache: Dict[str, GateResult] = {}
         # One warning per session is enough; see _check_gate_is_read_only.
@@ -126,10 +150,13 @@ class Orchestrator:
                     model=spec.model,
                     config=spec.options,
                 )
-        if config.gate:
-            # An agent that cannot run the gate is reviewing on hearsay.
-            for adapter in self.adapters.values():
-                adapter.allow_gate(config.gate)
+        # An agent that cannot run the gate is reviewing on hearsay. `allow_run`
+        # is for sessions with no gate that still have tests worth running —
+        # a plan checked against the suite rather than traced by hand.
+        for command in (config.gate, config.allow_run):
+            if command:
+                for adapter in self.adapters.values():
+                    adapter.allow_gate(command)
 
     # -- plumbing ---------------------------------------------------------
     def emit(self, kind: str, **payload: Any) -> None:
@@ -219,6 +246,7 @@ class Orchestrator:
             directive=directive,
             files=files or None,
             patch_log=self.pending_patch_log.pop(agent, None),
+            peer_refused=self.pending_refused.pop(agent, None),
         )
 
     def _system_prompt(self, agent: str, round_no: int) -> str:
@@ -252,6 +280,33 @@ class Orchestrator:
         # considered verdict, spending the round instead of retrying it.
         env = parse_envelope(reply.text, agent=agent, round_no=round_no)
 
+        # Caught here, before the peer's turn, because afterwards it costs one:
+        # the peer reads "fixed", checks, finds nothing, and says so.
+        writes = refused_writes(reply.meta.get("refused") or []) if reply.text.strip() else []
+        if writes:
+            changed = self.workspace.digest() != digest_before
+            self.emit("refused_writes", round=round_no, agent=agent, calls=writes)
+            retry = adapter.send(
+                prompts.REFUSED_WRITES_DIRECTIVE.format(
+                    calls="\n".join("- %s" % c for c in writes),
+                    state=("Some files did change this turn, so the workspace may hold only part "
+                           "of what you meant.") if changed else
+                          "The workspace is byte-identical to how it was when your turn began.",
+                    commands=("The only commands you can run are the project's own: %s."
+                              % " / ".join(c for c in (self.config.gate, self.config.allow_run) if c))
+                             if (self.config.gate or self.config.allow_run) else
+                             "You cannot run shell commands here.",
+                ),
+                system=self._system_prompt(agent, round_no),
+                round_no=round_no,
+            )
+            retry_env = parse_envelope(retry.text, agent=agent, round_no=round_no)
+            if retry.text.strip() and (retry.ok or retry_env.parse_ok):
+                first_cost = reply.meta.get("cost_usd")
+                reply, env = retry, retry_env
+                if first_cost and reply.meta.get("cost_usd") is not None:
+                    reply.meta["cost_usd"] = reply.meta["cost_usd"] + first_cost
+
         if not reply.ok and not env.parse_ok:
             record = TurnRecord(
                 round=round_no, agent=agent, role=role, envelope=Envelope(agent=agent, round=round_no),
@@ -281,6 +336,10 @@ class Orchestrator:
         if reads:
             self.pending_reads[agent] = list(reads)
 
+        refused = list(reply.meta.get("refused") or [])
+        if refused:
+            self.pending_refused[self.state.peer_of(agent)] = refused
+
         digest_after = self.workspace.digest()
         gate = self.gate_for(digest_after)
 
@@ -296,13 +355,14 @@ class Orchestrator:
         self.round_no = max(self.round_no, round_no)
 
         self.history.append(
-            "R%-2d %-6s %-8s %s%s%s"
+            "R%-2d %-6s %-8s %s%s%s%s"
             % (
                 round_no,
                 agent,
                 env.verdict,
                 record.ingest or "no issue changes",
                 " | %d file(s) written" % len(patch_log) if patch_log else "",
+                " | %d call(s) refused" % len(refused) if refused else "",
                 " | gate %s" % ("PASS" if gate.ok else "FAIL") if self.workspace.gate else "",
             )
         )
@@ -320,6 +380,7 @@ class Orchestrator:
             gate_ok=gate.ok,
             message=env.message,
             notes=env.notes,
+            refused=refused,
         )
         self._save()
         return record
