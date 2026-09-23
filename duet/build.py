@@ -79,6 +79,11 @@ Work in this order. Do not skip ahead.
 4. CHECK WHAT YOU BUILT against the criteria you agreed in step 1, not
    against your memory of the task.
 
+5. LEAVE A WAY IN. Write README.md with a section headed "How to run it" whose
+   first code block is the exact command that starts or uses what you built,
+   runnable from this directory as it stands. The person who asked for this
+   has not read your code; that command is the first thing they will try.
+
 The ordinary rules still apply: answer every objection your peer raises, and
 vote DONE only if you would ship exactly what is in the workspace now."""
 
@@ -346,6 +351,41 @@ def _measure(path: Path):
         return 0
 
 
+RUN_HEADING = re.compile(r"^#{1,6}\s*(how to run|run it|running|usage|quick\s*start|getting started)\b",
+                         re.IGNORECASE)
+
+
+def run_command(root: str) -> str:
+    """The first command under README.md's "How to run it", or "".
+
+    Read, never guessed. A build that ends with a command duet invented, which
+    then fails, is worse than one that ends with no command at all.
+    """
+    readme = Path(root).expanduser().resolve() / "README.md"
+    try:
+        lines = readme.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    in_section = in_block = False
+    for line in lines:
+        if not in_block and line.lstrip().startswith("#"):
+            in_section = bool(RUN_HEADING.match(line.strip()))
+            continue
+        if in_section and line.strip().startswith("```"):
+            if in_block:
+                return ""          # an empty block; do not look further
+            in_block = True
+            continue
+        if in_block:
+            command = line.strip()
+            if command and not command.startswith("#"):
+                command = command[2:] if command.startswith("$ ") else command
+                # `python3 run.py   # http://127.0.0.1:8000/` — the comment is
+                # for the reader of the README, not part of the command.
+                return re.sub(r"\s+#.*$", "", command)
+    return ""
+
+
 def summarise(root: str, seconds: float, gate: str) -> None:
     """What now exists, after a build session agrees.
 
@@ -380,6 +420,9 @@ def summarise(root: str, seconds: float, gate: str) -> None:
         print(ui.dim("  ... and %d more" % (len(rows) - 12)))
     if gate:
         print(ui.dim("  verified by: ") + gate)
+    command = run_command(root)
+    if command:
+        print(ui.dim("  run it:      ") + ui.bold(command))
 
 
 def human_output(args):

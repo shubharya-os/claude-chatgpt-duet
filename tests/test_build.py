@@ -321,3 +321,34 @@ def test_the_task_asks_for_the_defaults_that_have_consequences():
     task = build.task_for("a URL shortener", "pytest -q")
     assert "binds to" in task
     assert task.index("binds to") < task.index("THEN BUILD")
+
+
+def test_the_summary_ends_with_the_command_to_run_what_was_built(tmp_path, capsys):
+    """An expense-tracker build ended with 2,963 lines and no way in.
+
+    Finding `python3 run.py` meant reading a 51-criterion spec. The task now
+    asks the pair for a "How to run it" section, and the summary prints its
+    first command — read from the README, never guessed.
+    """
+    (tmp_path / "run.py").write_text("print('hi')\n")
+    (tmp_path / "README.md").write_text(
+        "# Thing\n\nIntro.\n\n```\npip install nothing\n```\n\n"
+        "## How to run it\n\n```sh\n$ python3 run.py   # http://127.0.0.1:8000/\n"
+        "python3 run.py --port 9000\n```\n")
+    build.summarise(str(tmp_path), 60.0, "")
+    out = capsys.readouterr().out
+    assert "run it:" in out
+    assert "python3 run.py" in out
+    assert "pip install" not in out          # not the first block in the file
+    assert "8000" not in out                 # the comment is not the command
+
+
+def test_no_run_section_means_no_guess(tmp_path, capsys):
+    (tmp_path / "app.py").write_text("x = 1\n")
+    (tmp_path / "README.md").write_text("# Thing\n\n```\npython3 app.py\n```\n")
+    build.summarise(str(tmp_path), 60.0, "")
+    assert "run it:" not in capsys.readouterr().out
+
+
+def test_the_build_task_asks_for_a_way_in():
+    assert "How to run it" in build.task_for("a thing", "pytest -q")
