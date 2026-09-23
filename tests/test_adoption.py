@@ -426,3 +426,22 @@ def test_an_empty_directory_is_pointed_at_build_not_run(tmp_path, capsys):
     cli.cmd_status(args)
     out = capsys.readouterr().out
     assert 'duet run "..."' in out
+
+
+def test_every_skill_discloses_a_same_vendor_fallback():
+    """/duet silently ran two Claude models and reported it as normal.
+
+    With the ChatGPT side out of quota, the model inside /duet found duet's
+    one-subscription command and ran it — good — then told the user the
+    session was running without mentioning it was Claude reviewing Claude.
+    The user would weigh that verdict as a cross-vendor second opinion. The
+    skill has to require saying so, not leave it to improvisation.
+    """
+    from pathlib import Path
+    import duet
+
+    skill_dir = Path(duet.__file__).parent / "skill"
+    for name in ("SKILL.md", "claude-command.md", "codex-skill.md", "codex-prompt.md"):
+        text = skill_dir.joinpath(name).read_text()
+        assert "Only have one of the two?" in text, name
+        assert "Never present it as a cross-vendor second opinion" in text, name

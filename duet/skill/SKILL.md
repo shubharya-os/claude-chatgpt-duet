@@ -75,9 +75,15 @@ To have the other model check work that already exists, give it that as the task
 - **Do not re-run it to get a better answer.** If the reviewer raised something real,
   fix it. Running again until it approves is the exact failure this tool exists to
   prevent.
-- If `duet` is missing or a side is not signed in, say so and give the fix
-  (`{{DUET}} doctor` prints it). Do not fall back to reviewing your own work and calling
-  it a second opinion.
+- **If one side is unavailable** — not signed in, out of quota — duet stops and prints
+  a command under "Only have one of the two?" that pairs two models from the side that
+  works. Run that command rather than giving up, **and tell the user plainly, before the
+  result, that this session was two Claude models, not Claude and ChatGPT, and why.** Two models
+  from one family share more blind spots than two vendors do; the user is owed that
+  before they weigh the verdict. Never present it as a cross-vendor second opinion.
+- If duet itself is missing, or *neither* side works, run `{{DUET}} doctor` and give the
+  user the fix it prints. Do not quietly review your own work and call it a second
+  opinion.
 
 ## Reading the result
 

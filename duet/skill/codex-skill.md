@@ -83,4 +83,12 @@ so — you are the third opinion, not a courier.
 - Never run this over uncommitted work the user cares about without saying so first —
   both agents edit the workspace. Offer a branch.
 - Do not re-run to get a nicer answer. Fix what was raised.
-- If a side is not signed in, run `{{DUET}} doctor` and hand the user the fix it prints.
+- **If one side is unavailable** — not signed in, out of quota — duet stops and prints
+  a command under "Only have one of the two?" that pairs two models from the side that
+  works. Run that command rather than giving up, **and tell the user plainly, before the
+  result, that this session was two ChatGPT models, not ChatGPT and Claude, and why.** Two models
+  from one family share more blind spots than two vendors do; the user is owed that
+  before they weigh the verdict. Never present it as a cross-vendor second opinion.
+- If duet itself is missing, or *neither* side works, run `{{DUET}} doctor` and give the
+  user the fix it prints. Do not quietly review your own work and call it a second
+  opinion.
