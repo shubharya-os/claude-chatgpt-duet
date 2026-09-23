@@ -1,0 +1,175 @@
+"""`duet fix`, `duet add`, `duet refactor`, `duet plan`.
+
+Each is `duet run` with a task that states a rule and a workflow that checks
+it — see workflows.py for what each check can and cannot prove. This module is
+only the glue: choosing a gate each workflow can trust, and refusing to start
+when the rule could not possibly be checked.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+from duet import ui
+from duet.build import human_output
+
+TASKS = {
+"fix": """\
+Fix this bug:
+
+%(what)s
+
+The rule this session is held to, checked by the harness rather than taken on
+trust: no sign-off counts until the gate has FAILED on the unfixed code. So:
+
+1. REPRODUCE IT. Write a test that fails because of this bug, and let the gate
+   go red on it. If an existing test already fails because of it, say which.
+   A test that fails for any other reason — a typo, a missing import — does not
+   reproduce anything, and your peer should say so.
+
+2. FIX IT, until the gate is green again with that test still in place.
+
+3. NAME THE CAUSE. Say what was actually wrong and why the change addresses the
+   cause rather than the symptom. Look for the same mistake elsewhere.
+
+The gate is exactly this, run from the root of this directory:
+
+    %(gate)s
+
+Reviewer: check that the reproducing test fails for the reason the bug
+describes, not merely that it failed.""",
+
+"add": """\
+Add this to the project:
+
+%(what)s
+
+The rule this session is held to, checked by the harness: no sign-off counts
+until a test that exercises this was added or extended, compared against the
+test files as they were when the session started.
+
+1. AGREE WHAT IT SHOULD DO before writing it — including the unhappy paths.
+2. WRITE THE TEST FIRST, and watch it fail.
+3. BUILD IT until the gate is green, existing tests included.
+4. FIT THE CODEBASE. Its conventions, its structure, its error handling — not
+   new ones you would have chosen on a blank page.
+
+The gate is exactly this, run from the root of this directory:
+
+    %(gate)s
+
+Reviewer: check that the new test exercises the new behaviour, and would
+fail without it.""",
+
+"refactor": """\
+Refactor:
+
+%(what)s
+
+Behaviour must not change. The rule, checked by the harness: every test file
+that existed at the start must be byte-for-byte unchanged when you sign off,
+and the gate must be green. Add new tests if you want more coverage. Do not
+edit the existing ones — they are the definition of the behaviour you are
+preserving, and changing them moves the goalposts.
+
+Tests only cover what they cover. Say what behaviour this touches that no test
+checks, and either add a test for it or state plainly that it is unverified.
+
+The gate is exactly this, run from the root of this directory:
+
+    %(gate)s""",
+
+"plan": """\
+Plan this. Do not build it:
+
+%(what)s
+
+Write the plan to PLAN.md. Only PLAN.md may change — the harness checks every
+other file against how it was when the session started.
+
+A plan worth having says: what changes and in what order; what could go wrong
+at each step and how you would know; what you are deliberately leaving out;
+and how the finished thing will be verified. Argue about the plan with your
+peer the way you would argue about code. Where you disagree and cannot settle
+it, write both positions into PLAN.md rather than papering over it.""",
+}
+
+USAGE = {
+    "fix": 'duet fix "the export drops rows whose name contains a comma"',
+    "add": 'duet add "a --json flag that prints the report as JSON"',
+    "refactor": 'duet refactor "split parser.py into a tokenizer and a parser"',
+    "plan": 'duet plan "move the storage layer from SQLite to Postgres"',
+}
+
+
+def gate_is_green(gate: str, root: str) -> bool:
+    try:
+        proc = subprocess.run(gate, cwd=root, shell=True, capture_output=True,
+                              text=True, timeout=900)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def run(args, name: str) -> int:
+    from duet import cli     # cli imports this module; see build.run
+
+    nested = cli.refuse_nested(name, args)
+    if nested is not None:
+        return nested
+
+    what = " ".join(getattr(args, "what", None) or []).strip()
+    if not what:
+        print(ui.red("nothing to %s." % name))
+        print("usage: " + USAGE[name])
+        return 2
+
+    root = str(Path(args.root).expanduser().resolve())
+    args.workflow = name
+
+    if name == "plan":
+        # A gate has nothing to say about a document, and "the tests still
+        # pass" would be a strange thing to make a plan wait on.
+        args.gate, args.no_gate = None, True
+        effective = ""
+    else:
+        configured = cli.load_config(root).gate
+        effective = args.gate or configured or cli.gate_detect.detect(root) or ""
+        if not effective or args.no_gate:
+            # Deliberately no starter gate here, unlike `duet build`: a gate
+            # that is red because no tests exist yet would satisfy `fix`'s
+            # "the gate went red" on day one, reproducing nothing.
+            print(ui.red("✗ ") + "`duet %s` needs this project's test command, and none was found."
+                  % name)
+            print(ui.dim("  Its rule is checked against the gate, so without one there is"))
+            print(ui.dim("  nothing to check it against."))
+            print(ui.dim("  fix: ") + "pass " + ui.bold('--gate "<your test command>"')
+                  + (", or start from nothing with duet build" if name == "add" else ""))
+            return 3
+        args.gate = effective
+        if name == "refactor" and not gate_is_green(effective, root):
+            print(ui.red("✗ ") + "the tests are failing before the refactor has started.")
+            print(ui.dim("  gate: ") + effective)
+            print(ui.dim("  A refactor has to show behaviour did not change, and the tests are"))
+            print(ui.dim("  the measure of that. Measured against a suite that already fails,"))
+            print(ui.dim("  green at the end could mean anything. Fix the suite first —"))
+            print(ui.dim("  ") + ui.bold('duet fix "..."') + ui.dim(" is the command for that."))
+            return 3
+
+    with human_output(args):
+        if effective:
+            print(ui.dim("   gate  ") + effective)
+        print(ui.dim("   rule  ") + RULES[name])
+
+    args.task = [TASKS[name] % {"what": what, "gate": effective or "(none — this is a plan)"}]
+    args.file = None
+    return cli.cmd_run(args)
+
+
+RULES = {
+    "fix": "no sign-off until the gate has failed on the unfixed code",
+    "add": "no sign-off until a test was added or extended",
+    "refactor": "existing tests must end byte-for-byte unchanged, gate green",
+    "plan": "only PLAN.md may change, and it must not be empty",
+}

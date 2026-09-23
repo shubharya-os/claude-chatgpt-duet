@@ -20,6 +20,7 @@ from duet.adapters import build as build_adapter
 from duet.adapters.base import Adapter
 from duet import gate as gate_detect
 from duet import build as build_cmd
+from duet import workflow_commands
 from duet.config import (
     BACKEND_ALIASES,
     DEFAULT_PAIR,
@@ -106,6 +107,10 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
             say("     " + ui.dim("running gate: %s" % event.get("command")))
         elif kind == "gate_done":
             say("     " + (ui.green("gate passed") if event.get("ok") else ui.red("gate failed (exit %s)" % event.get("exit_code"))))
+        elif kind == "workflow_veto":
+            say("  " + ui.yellow("✗ both signed off, but the `%s` rule is not met" % event.get("workflow")))
+            say("    " + ui.dim(ui.wrap(str(event.get("reason") or "")).lstrip()))
+            say("    " + ui.dim("sign-offs cleared; both agents have been told why"))
         elif kind == "gate_mutates":
             say("     " + ui.yellow("! the gate writes into the workspace"))
             say("     " + ui.dim("  sign-offs are counted against the files as they were before"))
@@ -217,6 +222,8 @@ def build_config(args: argparse.Namespace) -> Config:
         cfg.swap_every = args.swap
     if getattr(args, "commit", False):
         cfg.commit = True
+    if getattr(args, "workflow", ""):
+        cfg.workflow = args.workflow
     if getattr(args, "accept", None):
         cfg.acceptance = args.accept
     if getattr(args, "accept_file", None):
@@ -2078,32 +2085,51 @@ def build_parser() -> argparse.ArgumentParser:
                        help="permit starting this from inside another duet session")
     p_run.set_defaults(func=cmd_run)
 
-    p_build = sub.add_parser(
-        "build",
-        help="start a project from nothing, with a gate from round one",
-    )
-    p_build.add_argument("idea", nargs="*", help="what to build, in a sentence")
-    common(p_build)
-    p_build.add_argument("--context", help="the conversation this idea came out of")
-    p_build.add_argument("--context-file", metavar="PATH",
-                         help="read that context from a file, or - for stdin")
-    p_build.add_argument("--accept", help="acceptance criteria, in prose")
-    p_build.add_argument("--accept-file", help="read acceptance criteria from a file")
-    p_build.add_argument("--gate", help="the command that decides done "
-                                        "(default: the project's test command, or a starter one)")
-    p_build.add_argument("--no-gate", action="store_true",
-                         help="build without a gate — not advised here, it is the whole point")
-    p_build.add_argument("--rounds", type=int, help="maximum rounds (default 12)")
-    p_build.add_argument("--max-debate", type=int,
-                         help="rounds an issue may stay open before arbitration (default 3)")
-    p_build.add_argument("--pair", metavar="A+B", help="which two agents, and who leads")
-    p_build.add_argument("--start", help="who takes the first turn")
-    p_build.add_argument("--decider", help="who rules on deadlocked issues")
-    p_build.add_argument("--swap", type=int, help="swap lead/reviewer every N rounds (0 = never)")
-    p_build.add_argument("--commit", action="store_true", help="git-commit the result when both sign off")
-    p_build.add_argument("--allow-nested", action="store_true",
-                         help="permit starting this from inside another duet session")
+    def session_args(p: argparse.ArgumentParser, positional: str, helptext: str) -> None:
+        """The flags every session-starting command shares with `duet run`.
+
+        They all delegate to cmd_run, which reads these by name — so one list,
+        rather than five copies that drift apart the first time a flag is added.
+        """
+        p.add_argument(positional, nargs="*", help=helptext)
+        common(p)
+        p.add_argument("--context", help="the conversation this came out of")
+        p.add_argument("--context-file", metavar="PATH",
+                       help="read that context from a file, or - for stdin")
+        p.add_argument("--accept", help="acceptance criteria, in prose")
+        p.add_argument("--accept-file", help="read acceptance criteria from a file")
+        p.add_argument("--gate", help="the command that decides done "
+                                      "(default: this project's test command)")
+        p.add_argument("--no-gate", action="store_true",
+                       help="run without a gate — most of these refuse to")
+        p.add_argument("--rounds", type=int, help="maximum rounds (default 12)")
+        p.add_argument("--max-debate", type=int,
+                       help="rounds an issue may stay open before arbitration (default 3)")
+        p.add_argument("--pair", metavar="A+B", help="which two agents, and who leads")
+        p.add_argument("--start", help="who takes the first turn")
+        p.add_argument("--decider", help="who rules on deadlocked issues")
+        p.add_argument("--swap", type=int, help="swap lead/reviewer every N rounds (0 = never)")
+        p.add_argument("--commit", action="store_true", help="git-commit the result when both sign off")
+        p.add_argument("--allow-nested", action="store_true",
+                       help="permit starting this from inside another duet session")
+
+    p_build = sub.add_parser("build", help="start a project from nothing, with a gate from round one")
+    session_args(p_build, "idea", "what to build, in a sentence")
     p_build.set_defaults(func=build_cmd.run)
+
+    for name, helptext, what in (
+        ("fix", "fix a bug — no sign-off until it has been reproduced as a failing test",
+         "the bug, as you would describe it to a colleague"),
+        ("add", "add a feature — no sign-off until a test exercises it",
+         "the feature, in a sentence"),
+        ("refactor", "restructure without changing behaviour — existing tests may not be edited",
+         "what to restructure"),
+        ("plan", "argue out a plan into PLAN.md — no code may change",
+         "what to plan"),
+    ):
+        p_flow = sub.add_parser(name, help=helptext)
+        session_args(p_flow, "what", what)
+        p_flow.set_defaults(func=lambda a, _n=name: workflow_commands.run(a, _n))
 
     p_doctor = sub.add_parser("doctor", help="check that both agents are reachable")
     common(p_doctor)

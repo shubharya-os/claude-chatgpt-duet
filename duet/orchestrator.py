@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from duet import prompts
+from duet import prompts, workflows
 from duet.adapters import build as build_adapter
 from duet.adapters.base import Adapter
 from duet.config import Config
@@ -114,6 +114,8 @@ class Orchestrator:
         self._gate_cache: Dict[str, GateResult] = {}
         # One warning per session is enough; see _check_gate_is_read_only.
         self._gate_mutation_warned = False
+        # The rule this session is held to, if any, beyond the double sign-off.
+        self.workflow = workflows.get(config.workflow)
         self.adapters: Dict[str, Adapter] = adapters or {}
         if not self.adapters:
             for spec in config.agents:
@@ -163,6 +165,8 @@ class Orchestrator:
                 self.emit("gate_start", command=self.workspace.gate, digest=digest)
             result = self.workspace.run_gate()
             self._gate_cache[digest] = result
+            if self.workflow:
+                self.workflow.on_gate(self.config.workflow_state, digest, result.ok)
             if self.workspace.gate:
                 self.emit("gate_done", ok=result.ok, exit_code=result.exit_code, digest=digest)
                 self._check_gate_is_read_only(digest)
@@ -461,6 +465,12 @@ class Orchestrator:
             start_round=self.start_round,
         )
 
+        if self.workflow:
+            # Before the first gate runs: the baseline is the workspace as the
+            # pair found it. setdefault inside begin() keeps a resumed session's
+            # original baseline rather than retaking it from wherever it died.
+            self.workflow.begin(cfg.root, cfg.workflow_state)
+
         status, reason = STATUS_EXHAUSTED, "reached the %d-round limit" % cfg.max_rounds
         round_no = self.start_round - 1
         errors: Dict[str, int] = {name: 0 for name in cfg.agent_names}
@@ -497,6 +507,21 @@ class Orchestrator:
                     )
 
                 decision = self.state.decide(record.digest, (record.gate or gate).ok, cfg.on_blocked)
+                if decision.kind == "consensus" and self.workflow:
+                    # Both agents agree; the workflow's rule gets the last word,
+                    # because it is checked against what happened rather than
+                    # against what either of them says happened.
+                    veto = self.workflow.veto(cfg.root, cfg.workflow_state)
+                    if veto:
+                        self.emit("workflow_veto", workflow=self.workflow.name, reason=veto)
+                        self.state.signoffs.clear()
+                        for name in cfg.agent_names:
+                            self.pending_directive[name] = (
+                                "THE `%s` RULE IS NOT MET, SO THE SIGN-OFFS DO NOT COUNT\n\n%s\n\n"
+                                % (self.workflow.name, veto)
+                            ) + prompts.NORMAL_DIRECTIVE
+                        self._save()
+                        continue
                 if decision.kind == "consensus":
                     status, reason = STATUS_CONSENSUS, decision.reason
                     break

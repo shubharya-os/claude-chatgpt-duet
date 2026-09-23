@@ -138,6 +138,12 @@ class Config:
     swap_every: int = 0
     on_blocked: str = "stop"
     commit: bool = False
+    # Which workflow's rules apply ("" for a plain run), and what it has
+    # observed so far. Kept on the config because the config is saved after
+    # every turn — so a baseline taken at the start, or the fact that a bug
+    # was reproduced in round 2, survives a crash and a `duet resume`.
+    workflow: str = ""
+    workflow_state: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def agent_names(self) -> List[str]:
