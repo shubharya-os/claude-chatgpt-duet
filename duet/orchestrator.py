@@ -524,6 +524,9 @@ class Orchestrator:
                             ) + prompts.NORMAL_DIRECTIVE
                         self._save()
                         continue
+                    proven = self.workflow.proven(cfg.workflow_state)
+                    if proven:
+                        self.emit("workflow_proven", workflow=self.workflow.name, detail=proven)
                 if decision.kind == "consensus":
                     status, reason = STATUS_CONSENSUS, decision.reason
                     break

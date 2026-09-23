@@ -267,3 +267,19 @@ def test_each_task_names_its_gate_and_states_its_rule():
         assert "checked by the harness" in task, name
     plan = workflow_commands.TASKS["plan"] % {"what": "x", "gate": ""}
     assert "Only PLAN.md may change" in plan
+
+
+def test_a_met_rule_is_announced_with_what_it_proved(tmp_path):
+    """The replay's verdict is the reason to use `fix` — so the user sees it."""
+    (tmp_path / "slug.py").write_text(BUGGY)
+    (tmp_path / "test_slug.py").write_text(OLD_TEST)
+    both = envelope("fixed, with a test", "DONE", patches=[
+        {"path": "slug.py", "content": FIXED},
+        {"path": "test_slug.py", "content": OLD_TEST +
+         '\ndef test_punctuation():\n    assert slugify("Hello, World!") == "hello-world"\n'},
+    ])
+    _, result = run(tmp_path, [both] + [DONE] * 3, [DONE] * 3, workflow="fix", gate=PYTEST)
+    path = Path(result.session_dir) / "events.jsonl"
+    proven = [json.loads(l) for l in path.read_text().splitlines()
+              if json.loads(l).get("kind") == "workflow_proven"]
+    assert proven and "fail on the original code" in proven[0]["detail"]

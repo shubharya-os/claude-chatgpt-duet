@@ -107,6 +107,8 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
             say("     " + ui.dim("running gate: %s" % event.get("command")))
         elif kind == "gate_done":
             say("     " + (ui.green("gate passed") if event.get("ok") else ui.red("gate failed (exit %s)" % event.get("exit_code"))))
+        elif kind == "workflow_proven":
+            say("  " + ui.green("✓ `%s` rule met: " % event.get("workflow")) + str(event.get("detail") or ""))
         elif kind == "workflow_veto":
             say("  " + ui.yellow("✗ both signed off, but the `%s` rule is not met" % event.get("workflow")))
             say("    " + ui.dim(ui.wrap(str(event.get("reason") or "")).lstrip()))

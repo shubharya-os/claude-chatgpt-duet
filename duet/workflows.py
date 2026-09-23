@@ -189,6 +189,14 @@ class Workflow:
     def veto(self, root: str, state: Dict) -> Optional[str]:
         return None
 
+    def proven(self, state: Dict) -> str:
+        """What the check established, in a sentence — shown when the session ends.
+
+        The rule is the reason to use a workflow at all, so the result of
+        checking it belongs in front of the user, not only in state.json.
+        """
+        return ""
+
 
 class Fix(Workflow):
     """A fix counts only if its tests catch the bug in the original code.
@@ -261,6 +269,12 @@ class Fix(Workflow):
         )
 
 
+    def proven(self, state: Dict) -> str:
+        if state.get("replay") == "fails on original":
+            return "the tests fail on the original code and pass now, so they catch the bug"
+        return "the gate failed during the session before it passed (no replay was possible)"
+
+
 class Add(Workflow):
     """A feature counts only if a test fails without it.
 
@@ -300,6 +314,12 @@ class Add(Workflow):
         return None
 
 
+    def proven(self, state: Dict) -> str:
+        if state.get("replay") == "fails on original":
+            return "a test fails against the code as it was before, so the feature is tested"
+        return "a test was added or extended (no replay was possible)"
+
+
 class Refactor(Workflow):
     """Behaviour must not change, and the tests are the definition of behaviour.
 
@@ -334,6 +354,12 @@ class Refactor(Workflow):
         )
 
 
+    def proven(self, state: Dict) -> str:
+        n = len(state.get("baseline_tests", {}))
+        return ("all %d test file%s that existed at the start are byte-for-byte unchanged, and pass"
+                % (n, "" if n == 1 else "s"))
+
+
 class Plan(Workflow):
     """A plan, argued over, and nothing else.
 
@@ -365,6 +391,10 @@ class Plan(Workflow):
         if not problems:
             return None
         return "Not a plan yet: " + "; ".join(problems) + ". Both sign-offs are cleared until then."
+
+
+    def proven(self, state: Dict) -> str:
+        return "only PLAN.md changed; no code was touched"
 
 
 REGISTRY = {cls.name: cls for cls in (Fix, Add, Refactor, Plan)}
