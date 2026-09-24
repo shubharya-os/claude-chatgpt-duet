@@ -869,6 +869,15 @@ def _install_derived(home: Path, invocation: str, force: bool, installed, skippe
         installed.append((label, target, "so you can type /duet in %s" % label.split(" /")[0]))
 
 
+def _duet_plugin_installed(home: Path) -> bool:
+    """Is the duet Claude Code plugin (`/plugin install duet@duet`) installed?"""
+    try:
+        data = json.loads((home / ".claude" / "plugins" / "installed_plugins.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return any(key.split("@", 1)[0] == "duet" for key in (data.get("plugins") or {}))
+
+
 def cmd_skill(args: argparse.Namespace) -> int:
     """Install `/duet` into Claude Code and Codex, plus the Claude Code skill."""
     source_dir = skill_dir()
@@ -887,9 +896,15 @@ def cmd_skill(args: argparse.Namespace) -> int:
         return 0
 
     installed, skipped, failed = [], [], []
+    plugin = _duet_plugin_installed(home)
     for label, filename, relative, why in SKILL_TARGETS:
         source = source_dir / filename
         target = home / relative
+        if plugin and relative.parts[0] == ".claude":
+            # The plugin already gives Claude Code /duet and the skill; a second
+            # copy here would put two of each in front of the model.
+            skipped.append((label, target, "provided by the duet plugin"))
+            continue
         if not source.is_file():
             failed.append((label, target, "packaged file missing: %s" % source))
             continue

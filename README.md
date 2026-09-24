@@ -98,6 +98,17 @@ labs fail differently — but nothing in the mechanism depends on it, and when a
 is missing duet prints the one-subscription command with your own arguments already
 in it.
 
+**Or, from inside Claude Code, as a plugin** — the way ECC installs, in two commands:
+
+```
+/plugin marketplace add shubharya-os/duet
+/plugin install duet@duet
+```
+
+That gives you `/duet` and the skill at about 160 tokens per session (ECC loads about
+41,500). The first `/duet` checks for the CLI and, if it is missing, offers the one-line
+`pipx install` and waits for your yes.
+
 <details>
 <summary>or with pip, if you would rather not pipe a script to a shell</summary>
 
@@ -601,7 +612,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-398 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+402 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

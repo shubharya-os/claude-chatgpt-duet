@@ -2,6 +2,10 @@
 
 ## 0.7.0
 
+- A Claude Code plugin, served from this repository: `/plugin marketplace add
+  shubharya-os/duet`, then `/plugin install duet@duet`. About 160 tokens per session.
+  Its files are generated from the same sources `duet skill install` writes, and
+  `duet skill install` leaves Claude Code alone when the plugin is already there.
 - `duet plan --quick`: one full draft, one review that may edit it. About ECC's planning
   time (5 min 59 s against 5 min 23 s, run side by side, tied 4/5 on a blind-graded key
   written first). Reported as *reviewed*, not as signed off by both, unless the reviewer

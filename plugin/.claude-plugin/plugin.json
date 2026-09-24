@@ -1,0 +1,22 @@
+{
+  "name": "duet",
+  "version": "0.7.0",
+  "description": "Two AI models build it and check each other; the harness runs your tests and checks the rule each workflow is held to (fix, add, refactor, build, plan).",
+  "author": {
+    "name": "shubharya-os",
+    "url": "https://github.com/shubharya-os"
+  },
+  "homepage": "https://shubharya-os.github.io/duet/",
+  "repository": "https://github.com/shubharya-os/duet",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "second-opinion",
+    "code-review",
+    "tdd",
+    "workflow",
+    "multi-agent",
+    "consensus"
+  ]
+}

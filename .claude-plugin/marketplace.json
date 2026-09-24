@@ -1,0 +1,32 @@
+{
+  "name": "duet",
+  "owner": {
+    "name": "shubharya-os",
+    "url": "https://github.com/shubharya-os"
+  },
+  "metadata": {
+    "description": "duet: two models, one checked rule per workflow"
+  },
+  "plugins": [
+    {
+      "name": "duet",
+      "source": "./plugin",
+      "description": "Two AI models build it and check each other; the harness runs your tests and checks the rule each workflow is held to (fix, add, refactor, build, plan).",
+      "version": "0.7.0",
+      "homepage": "https://shubharya-os.github.io/duet/",
+      "repository": "https://github.com/shubharya-os/duet",
+      "license": "MIT",
+      "category": "workflow",
+      "keywords": [
+        "claude-code",
+        "codex",
+        "second-opinion",
+        "code-review",
+        "tdd",
+        "workflow",
+        "multi-agent",
+        "consensus"
+      ]
+    }
+  ]
+}
