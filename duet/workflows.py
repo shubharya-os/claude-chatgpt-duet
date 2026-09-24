@@ -19,6 +19,7 @@ declaring done without having done it.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import shutil
 import subprocess
@@ -34,8 +35,23 @@ TEST_GLOBS = (
     "test_*.py", "*_test.py", "*_test.go", "*.test.js", "*.test.ts",
     "*.test.jsx", "*.test.tsx", "*.spec.js", "*.spec.ts", "*_test.rb",
     "*_spec.rb", "*Test.java", "*Tests.java", "*_test.rs", "*Test.kt",
+    # Swift/XCTest names a test file by suffix, not by a `test_` prefix.
+    "*Tests.swift", "*Test.swift", "*Spec.swift",
+    "*Tests.cs", "*Test.cs",                        # C# / xUnit, NUnit
+    "*_test.exs",                                    # Elixir
+    "*Spec.scala", "*Test.scala", "*Suite.scala",    # Scala
+    "*Test.php",                                     # PHPUnit
+    "*_test.dart",                                   # Dart / Flutter
 )
-TEST_DIRS = ("tests", "test", "spec", "__tests__")
+# Directory names that mean "tests live here", compared case-insensitively:
+# Xcode's conventional `Tests/` is the same directory as Go's `tests/`, and a
+# case-sensitive comparison made every Swift project look like it had none.
+TEST_DIRS = ("tests", "test", "spec", "specs", "__tests__")
+# Xcode names a test target's directory after the target: TwineTests/,
+# MyAppUITests/. The capital T is what distinguishes those from an ordinary
+# directory that merely ends in the letters "tests" — Contests/, Latests/ —
+# so this suffix is matched case-sensitively, unlike TEST_DIRS above.
+TEST_DIR_SUFFIXES = ("Tests", "UITests")
 # The same list the workspace digest skips. Two lists drifted once: the plan rule
 # counted `.pytest_cache` as a changed file, so a plan session whose agents ran
 # the tests — which it now lets them do — was refused for it.
@@ -50,10 +66,28 @@ def _digest(path: Path) -> str:
     return h.hexdigest()
 
 
+def is_test_dir(part: str) -> bool:
+    """Is this one path component a directory tests live in?
+
+    Two separate rules, because they need different case handling. `Tests`,
+    `tests` and `TESTS` are all the same directory, so the exact names are
+    compared case-insensitively. `TwineTests` is an Xcode test target and
+    `Contests` is not, and the only thing that tells them apart is the capital
+    T — so the suffix rule is case-sensitive, and requires something in front
+    of the suffix.
+    """
+    if part.lower() in TEST_DIRS:
+        return True
+    return any(part.endswith(suffix) and len(part) > len(suffix)
+               for suffix in TEST_DIR_SUFFIXES)
+
+
 def _is_test(rel: Path) -> bool:
-    if any(part in TEST_DIRS for part in rel.parts[:-1]):
+    if any(is_test_dir(part) for part in rel.parts[:-1]):
         return rel.suffix not in ("", ".md", ".txt", ".json", ".lock")
-    return any(rel.match(pattern) for pattern in TEST_GLOBS)
+    # fnmatchcase, not Path.match: the globs distinguish `FooTest.cs` from
+    # `contest.cs` by case, and Path.match follows the platform's rules.
+    return any(fnmatch.fnmatchcase(rel.name, pattern) for pattern in TEST_GLOBS)
 
 
 def test_files(root: str) -> Dict[str, str]:
@@ -74,6 +108,26 @@ def test_files(root: str) -> Dict[str, str]:
             except OSError:
                 continue
     return found
+
+
+def any_test_file(root: str) -> bool:
+    """Is there anything here duet would call a test? Stops at the first one.
+
+    The same question `test_files` answers, for callers that only need yes or
+    no and should not be hashing a repository to find out.
+    """
+    base = Path(root).expanduser().resolve()
+    if not base.is_dir():
+        return False
+    for path in base.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(base)
+        if SKIP_DIRS & set(rel.parts):
+            continue
+        if _is_test(rel):
+            return True
+    return False
 
 
 def all_files(root: str) -> Dict[str, str]:
@@ -98,6 +152,66 @@ def all_files(root: str) -> Dict[str, str]:
 # Directories a project needs in order to run its tests but that are not part
 # of what anyone wrote. A replay links to them rather than copying them.
 DEPENDENCY_DIRS = ("node_modules", ".venv", "venv")
+
+# Xcode records every source file of a target in project.pbxproj, and the
+# newer "synchronized" groups record the directory instead of each file.
+SYNCED_GROUPS = "PBXFileSystemSynchronizedRootGroup"
+# Gates that build an Xcode target instead of walking the tree for tests, and
+# so inherit the blind spot below. `swift test` on a Swift package does walk
+# the tree, and so does every other runner duet knows — including jest in a
+# React Native repo, which has an .xcodeproj sitting right there. Deciding
+# from the gate rather than from "is there an .xcodeproj anywhere" is what
+# keeps those projects replaying.
+XCODE_DRIVERS = ("xcodebuild", "fastlane")
+# What an Xcode target compiles. A .js or .py test added to a repo that also
+# holds an .xcodeproj is not its business.
+XCODE_SOURCES = (".swift", ".m", ".mm", ".c", ".cc", ".cpp", ".h")
+
+
+def unlisted_in_project(work: Path, added: List[str], gate: str) -> List[str]:
+    """Of these newly added test files, which would an Xcode replay not compile?
+
+    Copying a test file into the original tree is enough for pytest, go test
+    or jest, which find tests by walking the directory. Xcode does not: a
+    target compiles the files its project.pbxproj lists, and the *original*
+    project file cannot list a test written during the session. The replay
+    would build the old target, run the old tests, and pass — for a reason
+    that has nothing to do with the code. Reporting that as "passes on the
+    original" would clear a sign-off the pair had actually earned, so the
+    caller reports that it could not run instead.
+
+    A project using synchronized groups compiles whatever is in the directory,
+    so a new file under a directory the project names is fine.
+
+    Known limit: a gate that hides xcodebuild behind `make test` or a script
+    is not recognised here, and that replay runs as before. Widening the match
+    would cost the replay in every project that merely contains an .xcodeproj,
+    which is the more common case by far.
+    """
+    if not any(driver in gate for driver in XCODE_DRIVERS):
+        return []
+    added = [rel for rel in added if rel.endswith(XCODE_SOURCES)]
+    if not added:
+        return []
+    manifests = sorted(work.glob("**/*.xcodeproj/project.pbxproj"))
+    if not manifests:
+        return []
+    text = ""
+    for manifest in manifests:
+        try:
+            text += manifest.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return []       # cannot tell; do not invent a reason to bail out
+    synced = SYNCED_GROUPS in text
+    missing = []
+    for rel in added:
+        parts = rel.split("/")
+        if parts[-1] in text:
+            continue
+        if synced and len(parts) > 1 and parts[-2] in text:
+            continue
+        missing.append(rel)
+    return missing
 
 
 def snapshot(root: str, state: Dict) -> None:
@@ -144,6 +258,7 @@ def replay_fails(root: str, state: Dict) -> Optional[bool]:
     the first live `duet fix` did.
     """
     base = Path(root).expanduser().resolve()
+    state.pop("replay_note", None)
     gate = state.get("gate") or ""
     snap = base / state.get("baseline_dir", "")
     if not gate or not state.get("baseline_dir") or not snap.is_dir():
@@ -151,16 +266,31 @@ def replay_fails(root: str, state: Dict) -> Optional[bool]:
     # A replay asks whether the tests tell the two versions apart. With no
     # tests there is nothing to ask it about, and the gate failing on the old
     # code would say something about the gate, not about any test.
-    if not test_files(root):
+    tests = test_files(root)
+    if not tests:
+        state["replay_note"] = (
+            "no file in this workspace looks like a test to duet, so there was "
+            "nothing to replay")
         return None
     try:
         with tempfile.TemporaryDirectory(prefix="duet-replay-") as tmp:
             work = Path(tmp) / "w"
             shutil.copytree(str(snap), str(work))
-            for rel in test_files(root):
+            added = []
+            for rel in tests:
                 target = work / rel
+                if not target.exists():
+                    added.append(rel)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(base / rel), str(target))
+            unlisted = unlisted_in_project(work, added, gate)
+            if unlisted:
+                state["replay_note"] = (
+                    "%s %s not listed in the original Xcode project, so a replay would "
+                    "build the old test target and never run %s"
+                    % (", ".join(unlisted[:3]), "is" if len(unlisted) == 1 else "are",
+                       "it" if len(unlisted) == 1 else "them"))
+                return None
             for name in DEPENDENCY_DIRS:
                 if (base / name).is_dir() and not (work / name).exists():
                     (work / name).symlink_to(base / name)
@@ -201,6 +331,11 @@ TEST_NAME_PATTERNS = (
     r"\b(?:it|test)\(\s*['\"`]([^'\"`]{3,80})['\"`]",     # JS / TS
     r"#\[test\]\s*(?:async\s+)?fn\s+(\w+)",             # Rust
 )
+# XCTest names its cases `func testFoo()` — which is also how a Go test file
+# spells an unexported *helper*, `func testServer(t *testing.T)`. Asked of
+# every language, it would put helpers in front of the plan rule as tests the
+# plan must account for, so it is asked only of Swift.
+SWIFT_NAME_PATTERN = r"^\s*(?:\w+\s+)*func\s+(test\w+)\s*\("
 # Past this many, naming every test in a plan is busywork rather than care.
 NAMED_TEST_LIMIT = 40
 
@@ -215,11 +350,26 @@ def test_names(root: str) -> List[str]:
             text = (base / rel).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for pattern in TEST_NAME_PATTERNS:
+        patterns = TEST_NAME_PATTERNS
+        if rel.endswith(".swift"):
+            patterns += (SWIFT_NAME_PATTERN,)
+        for pattern in patterns:
             for match in re.finditer(pattern, text, re.MULTILINE):
                 if match.group(1) not in names:
                     names.append(match.group(1))
     return names
+
+
+def _why_no_replay(state: Dict) -> str:
+    """The reason the replay did not run, for the sentence that reports it.
+
+    "No replay was possible" on its own reads like a shrug. When the harness
+    knows why — nothing here looks like a test, an Xcode target would not have
+    compiled the new one — saying so is the difference between a result someone
+    can act on and one they have to guess at.
+    """
+    note = state.get("replay_note")
+    return ": %s" % note if note else ""
 
 
 class Workflow:
@@ -317,12 +467,13 @@ class Fix(Workflow):
             )
         if state.get("reproduced"):
             return None
+        note = state.get("replay_note")
         return (
-            "The harness could not replay your tests against the original code, and "
+            "The harness could not replay your tests against the original code%s, and "
             "no state in this session made the gate fail — so there is no evidence "
             "the bug was ever reproduced. Leave a failing test in place for one turn "
             "so the gate can see it red, then fix it. Both sign-offs are cleared "
-            "until then."
+            "until then." % (" (%s)" % note if note else "")
         )
 
 
@@ -333,7 +484,8 @@ class Fix(Workflow):
                     "bug. Check that one exercises it through the original interface")
         if state.get("replay") == "fails on original":
             return "the tests fail on the original code and pass now, so they catch the bug"
-        return "the gate failed during the session before it passed (no replay was possible)"
+        return ("the gate failed during the session before it passed (no replay was "
+                "possible%s)" % _why_no_replay(state))
 
 
 class Add(Workflow):
@@ -378,7 +530,8 @@ class Add(Workflow):
     def proven(self, state: Dict) -> str:
         if state.get("replay") == "fails on original":
             return "a test fails against the code as it was before, so the feature is tested"
-        return "a test was added or extended (no replay was possible)"
+        return ("a test was added or extended (no replay was possible%s)"
+                % _why_no_replay(state))
 
 
 class Refactor(Workflow):

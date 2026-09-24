@@ -211,6 +211,37 @@ def test_a_passing_gate_is_fine_once_tests_exist(tmp_path):
     assert build.gate_proves_nothing("true", str(tmp_path)) is False
 
 
+def test_an_xcode_project_is_not_called_a_workspace_with_no_tests(tmp_path):
+    """`has_tests` was a hand-copy of the workflow rules' detector, and drifted.
+
+    It knew no Swift and looked for `tests/` at the top level only, matched
+    case-sensitively — so an iOS repo read as empty of tests. A green
+    `xcodebuild` gate there was called "green with nothing here to have
+    passed", and a *detected* gate (a Makefile whose `test:` target runs
+    xcodebuild) made `duet build` refuse to start with exit 3.
+    """
+    (tmp_path / "TwineTests").mkdir()
+    (tmp_path / "TwineTests" / "AppLogicTests.swift").write_text(
+        "final class AppLogicTests: XCTestCase {\n    func testScore() {}\n}\n")
+    assert build.has_tests(str(tmp_path)) is True
+    assert build.gate_proves_nothing("true", str(tmp_path)) is False
+
+
+def test_one_detector_answers_for_both_the_rules_and_the_gate_check(tmp_path):
+    """Two lists drifted apart once already; this is the same list, asked twice."""
+    for rel in ("Tests/FooTests.swift", "src/CalculatorTests.cs", "lib/widget_test.dart"):
+        workspace = tmp_path / rel.replace("/", "_")
+        (workspace / rel).parent.mkdir(parents=True)
+        (workspace / rel).write_text("x")
+        assert build.has_tests(str(workspace)) is True, rel
+    empty = tmp_path / "ordinary-source"
+    (empty / "Sources").mkdir(parents=True)
+    (empty / "Sources" / "App.swift").write_text("x")
+    (empty / "Contests").mkdir()
+    (empty / "Contests" / "Entry.swift").write_text("x")
+    assert build.has_tests(str(empty)) is False
+
+
 def test_go_and_cargo_gates_are_wrapped_so_zero_tests_cannot_pass():
     wrapped = build.proof_against_zero_tests("go test ./...")
     assert wrapped != "go test ./..."

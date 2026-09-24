@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Optional, Tuple
 
-from duet import ui
+from duet import ui, workflows
 
 TASK = """\
 Build this, from nothing, in this directory:
@@ -213,21 +213,17 @@ def proof_against_zero_tests(command: str) -> str:
 
 
 def has_tests(root: str) -> bool:
-    """Does anything here look like a test the gate could be running?"""
-    base = Path(root).expanduser().resolve()
-    if not base.is_dir():
-        return False
-    patterns = ("test_*.py", "*_test.py", "*_test.go", "*.test.js", "*.test.ts",
-                "*_test.rb", "*Test.java", "*_test.rs")
-    for pattern in patterns:
-        for found in base.rglob(pattern):
-            if ".duet" not in found.parts and "node_modules" not in found.parts:
-                return True
-    for name in ("tests", "test", "spec", "__tests__"):
-        directory = base / name
-        if directory.is_dir() and any(directory.iterdir()):
-            return True
-    return False
+    """Does anything here look like a test the gate could be running?
+
+    Asked of the same detector the workflow rules use, rather than of a second
+    list. This was that second list, hand-copied, and it drifted exactly as
+    the first one did: it never learned Swift, and it looked for `tests/` at
+    the top level only, case-sensitively. An Xcode project with ninety XCTest
+    cases read as a directory with nothing in it — so `duet build` called a
+    green `xcodebuild` gate "green with nothing here to have passed", and
+    refused to start when it had detected that gate itself.
+    """
+    return workflows.any_test_file(root)
 
 
 def write_runner(root: str) -> str:
