@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+- `duet plan --quick`: one full draft, one review that may edit it. About ECC's planning
+  time (5 min 59 s against 5 min 23 s, run side by side, tied 4/5 on a blind-graded key
+  written first). Reported as *reviewed*, not as signed off by both, unless the reviewer
+  changed nothing.
+- Refused tool calls are seen by the harness. Claude Code's own `permission_denials`
+  are read every turn; a refused edit goes back to the same agent before its peer sees
+  the claim, and any other refused call reaches the peer marked unverified. In a live
+  plan session that failure cost two rounds.
+- `duet plan` agents may run the project's own test command (and nothing else), so a
+  claim about what the tests do is checked rather than traced by hand.
+- Fixed: the plan rule counted `.pytest_cache/` as a changed file. It now shares the
+  workspace's ignore list.
+
+## Earlier
 
 - `duet doctor` no longer calls the ChatGPT side ready on the strength of a sign-in.
   An account can be signed in and out of Codex usage allowance at once, and
