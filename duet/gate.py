@@ -63,8 +63,31 @@ def _make_has_test_target(root: Path) -> bool:
 
 
 def _has_python_tests(root: Path) -> bool:
-    if (root / "tests").is_dir() or (root / "test").is_dir():
-        return True
+    """Is there a Python test here — or only a directory named like one?
+
+    macOS and Windows match filenames without regard to case, so
+    `(root / "tests").is_dir()` is also true of Xcode's `Tests/`. An iOS
+    project was handed `pytest -q` on the strength of it: a gate that collects
+    nothing, exits 5, and is red every round — which blocks both sign-offs for
+    the whole session, however right the pair are. A directory holding another
+    language's tests is not evidence of Python ones.
+
+    An empty `tests/` still counts. That is a greenfield project about to have
+    tests written into it, and the gate it needs is the one that will run them.
+    """
+    for name in ("tests", "test"):
+        directory = root / name
+        if not directory.is_dir():
+            continue
+        other_language = False
+        for path in directory.rglob("*"):
+            if not path.is_file() or not path.suffix:
+                continue
+            if path.suffix == ".py":
+                return True
+            other_language = True
+        if not other_language:
+            return True
     return any(root.glob("test_*.py")) or any(root.glob("*_test.py"))
 
 

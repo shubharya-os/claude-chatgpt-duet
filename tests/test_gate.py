@@ -39,6 +39,23 @@ def test_loose_test_files_count(tmp_path, tools_present):
     assert detect(str(tmp_path)) == "pytest -q"
 
 
+def test_a_swift_test_directory_is_not_a_python_one(tmp_path, tools_present):
+    """macOS matches filenames without regard to case, so `(root / "tests")`
+    was also Xcode's `Tests/`, and an iOS repo with no --gate was handed
+    `pytest -q`: it collects nothing, exits 5, and is red every round, which
+    blocks both sign-offs for the whole session."""
+    (tmp_path / "Tests").mkdir()
+    (tmp_path / "Tests" / "AppLogicTests.swift").write_text("func testScore() {}\n")
+    assert detect(str(tmp_path)) is None
+
+
+def test_a_tests_directory_with_python_in_it_still_counts(tmp_path, tools_present):
+    """Nested layouts included — the old check never looked inside at all."""
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "test_deep.py").write_text("def test_ok():\n    assert True\n")
+    assert detect(str(tmp_path)) == "pytest -q"
+
+
 def test_npm_test_script(tmp_path, tools_present):
     (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "jest"}}))
     assert detect(str(tmp_path)) == "npm test"

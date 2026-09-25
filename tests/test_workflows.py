@@ -353,3 +353,241 @@ def test_the_plan_task_hands_the_pair_the_test_names(tmp_path, capsys, monkeypat
     monkeypatch.setattr("duet.cli.cmd_run", lambda a: seen.setdefault("task", a.task[0]) and 0)
     workflow_commands.run(args_for(tmp_path, what="move storage"), "plan")
     assert "test_adds" in seen["task"]
+
+
+# -- what duet recognises as a test, per ecosystem ----------------------------
+#
+# Three live sessions in an iOS repo ended EXHAUSTED with a green gate and ~90
+# XCTest cases between them: TEST_DIRS was compared case-sensitively, so Xcode's
+# conventional `Tests/` never matched, and no glob knew about Swift. duet saw a
+# repo with zero tests, so `add` said no test had been added and `fix` had
+# nothing to replay.
+
+import pytest  # noqa: E402
+
+RECOGNISED = [
+    # Xcode's conventional directory, and its test-target directories.
+    ("Tests/FooTests.swift", True),
+    ("Tests/Helpers.swift", True),          # anything inside a test directory
+    ("GalleryTests/AppLogicTests.swift", True),
+    ("MyAppTests/FooTests.swift", True),
+    ("MyAppUITests/LoginUITests.swift", True),
+    ("UITests/Flow.swift", True),
+    ("TESTS/thing.py", True),               # the exact names, any casing
+    ("Specs/thing.rb", True),
+    ("__tests__/a.js", True),
+    # Ordinary source, which must stay ordinary source.
+    ("Sources/Foo.swift", False),
+    ("Sources/Contest.swift", False),
+    ("Contests/Foo.swift", False),          # ends in "tests", lowercase t
+    ("Latests/Foo.swift", False),
+    ("Attestations/Foo.swift", False),
+    ("Tests.swift", True),                  # the glob, with nothing in front
+    # Swift by filename, outside any test directory.
+    ("Sources/FooTests.swift", True),
+    ("Sources/FooTest.swift", True),
+    ("Sources/FooSpec.swift", True),
+    # The other suffix-named ecosystems.
+    ("src/CalculatorTests.cs", True),
+    ("src/CalculatorTest.cs", True),
+    ("src/contest.cs", False),
+    ("lib/parser_test.exs", True),
+    ("lib/parser.exs", False),
+    ("src/ParserSpec.scala", True),
+    ("src/ParserTest.scala", True),
+    ("src/ParserSuite.scala", True),
+    ("src/Parser.scala", False),
+    ("src/InvoiceTest.php", True),
+    ("src/latest.php", False),
+    ("lib/widget_test.dart", True),
+    ("lib/widget.dart", False),
+]
+
+
+@pytest.mark.parametrize("rel,is_test", RECOGNISED)
+def test_what_counts_as_a_test_file(tmp_path, rel, is_test):
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("x")
+    assert (rel in workflows.test_files(str(tmp_path))) is is_test
+
+
+def test_a_changed_swift_test_satisfies_the_add_rule(tmp_path):
+    """The `add` veto in an Xcode layout, which compared two empty sets."""
+    (tmp_path / "GalleryTests").mkdir()
+    suite = tmp_path / "GalleryTests" / "AppLogicTests.swift"
+    suite.write_text("func testOne() { XCTAssertTrue(true) }\n")
+    wf = workflows.get("add")
+    state = {}
+    wf.begin(str(tmp_path), state)
+    assert "GalleryTests/AppLogicTests.swift" in state["baseline_tests"]
+
+    # Untouched: still "no test was added or extended".
+    assert "No test was added or extended" in (wf.veto(str(tmp_path), state) or "")
+
+    suite.write_text("func testOne() { XCTAssertTrue(true) }\n"
+                     "func testTwo() { XCTAssertFalse(false) }\n")
+    assert wf.veto(str(tmp_path), state) is None
+
+
+def test_swift_test_names_are_read_for_a_plan(tmp_path):
+    (tmp_path / "Tests").mkdir()
+    (tmp_path / "Tests" / "BoardTests.swift").write_text(
+        "final class BoardTests: XCTestCase {\n"
+        "    func testLadderMovesUp() {}\n"
+        "    private func helper() {}\n"
+        "    func testSnakeMovesDown() throws {}\n}\n")
+    assert workflows.test_names(str(tmp_path)) == ["testLadderMovesUp", "testSnakeMovesDown"]
+
+
+def test_a_go_helper_is_not_mistaken_for_a_swift_test(tmp_path):
+    """`func testServer(t *testing.T)` is a helper in Go and a test in Swift.
+
+    Read out of a Go file, it would arrive at the plan rule as a test the plan
+    has to account for by name — a demand for something that is not a test.
+    """
+    (tmp_path / "server_test.go").write_text(
+        "func TestServes(t *testing.T) {}\n\nfunc testServer(t *testing.T) *S { return nil }\n")
+    assert workflows.test_names(str(tmp_path)) == ["TestServes"]
+
+
+# -- the replay, which copies the files the same detector finds ---------------
+
+SWIFT_GATE = 'test "$(cat Tests/AppTests.swift)" = "$(cat Sources/App.swift)"'
+
+
+def swift_workspace(tmp_path, app, expectation):
+    (tmp_path / "Sources").mkdir(exist_ok=True)
+    (tmp_path / "Tests").mkdir(exist_ok=True)
+    (tmp_path / "Sources" / "App.swift").write_text(app)
+    (tmp_path / "Tests" / "AppTests.swift").write_text(expectation)
+
+
+def test_the_replay_runs_todays_swift_tests_against_the_original(tmp_path):
+    """Invisible test files meant the replay copied nothing and answered None."""
+    swift_workspace(tmp_path, "buggy\n", "buggy\n")
+    state = {"gate": SWIFT_GATE}
+    workflows.snapshot(str(tmp_path), state)
+    swift_workspace(tmp_path, "fixed\n", "fixed\n")       # the fix, and its test
+
+    assert workflows.replay_fails(str(tmp_path), state) is True
+    assert "replay_note" not in state
+
+
+def test_a_swift_test_that_would_have_passed_anyway_is_still_caught(tmp_path):
+    swift_workspace(tmp_path, "same\n", "same\n")
+    state = {"gate": SWIFT_GATE}
+    workflows.snapshot(str(tmp_path), state)
+    (tmp_path / "Tests" / "AppTests.swift").write_text("same\n")   # rewritten, not stronger
+    assert workflows.replay_fails(str(tmp_path), state) is False
+
+
+def test_a_workspace_with_nothing_that_looks_like_a_test_says_so(tmp_path):
+    (tmp_path / "App.swift").write_text("x\n")
+    state = {"gate": "true"}
+    workflows.snapshot(str(tmp_path), state)
+    assert workflows.replay_fails(str(tmp_path), state) is None
+    assert "nothing to replay" in state["replay_note"]
+
+
+PBXPROJ = """// !$*UTF8*$!
+{ objects = {
+    A1 /* ExistingTests.swift */ = {isa = PBXFileReference; path = ExistingTests.swift; };
+  };
+}
+"""
+
+SYNCED_PBXPROJ = """// !$*UTF8*$!
+{ objects = {
+    A1 = {isa = PBXFileSystemSynchronizedRootGroup; path = AppTests; };
+  };
+}
+"""
+
+
+def xcode_workspace(tmp_path, pbxproj=PBXPROJ):
+    (tmp_path / "App.xcodeproj").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "App.xcodeproj" / "project.pbxproj").write_text(pbxproj)
+    (tmp_path / "AppTests").mkdir(exist_ok=True)
+    (tmp_path / "AppTests" / "ExistingTests.swift").write_text("func testOld() {}\n")
+
+
+# A gate driven by Xcode — the driver's name is what marks it as one. Where it
+# is reached at all it stands in for a build that failed; the case that matters
+# most never runs it, because the replay refuses before getting that far.
+XCODE_GATE = "false   # xcodebuild test -scheme App"
+
+
+def test_a_new_test_xcode_would_not_compile_is_reported_as_could_not_run(tmp_path):
+    """Honest failure mode: the old target cannot contain a test written today.
+
+    Copying the file in is enough for pytest or go test, which walk the tree.
+    Xcode builds what project.pbxproj lists, so the replay would run the old
+    tests and pass — which is not the same as "your tests pass on the original".
+    """
+    xcode_workspace(tmp_path)
+    state = {"gate": XCODE_GATE}
+    workflows.snapshot(str(tmp_path), state)
+    (tmp_path / "AppTests" / "NewTests.swift").write_text("func testNew() {}\n")
+
+    assert workflows.replay_fails(str(tmp_path), state) is None
+    assert "NewTests.swift" in state["replay_note"]
+    assert "not listed in the original Xcode project" in state["replay_note"]
+
+
+def test_an_edited_swift_test_the_xcode_project_already_lists_still_replays(tmp_path):
+    """Only *new* files are unreplayable; a fix usually extends an existing suite."""
+    xcode_workspace(tmp_path)
+    state = {"gate": XCODE_GATE}
+    workflows.snapshot(str(tmp_path), state)
+    (tmp_path / "AppTests" / "ExistingTests.swift").write_text("func testOld() { stronger }\n")
+    assert workflows.replay_fails(str(tmp_path), state) is True
+    assert "replay_note" not in state
+
+
+def test_a_synchronized_xcode_group_compiles_new_files_so_the_replay_runs(tmp_path):
+    xcode_workspace(tmp_path, SYNCED_PBXPROJ)
+    state = {"gate": XCODE_GATE}
+    workflows.snapshot(str(tmp_path), state)
+    (tmp_path / "AppTests" / "NewTests.swift").write_text("func testNew() {}\n")
+    assert workflows.replay_fails(str(tmp_path), state) is True
+    assert "replay_note" not in state
+
+
+def test_a_project_whose_gate_is_not_xcode_keeps_its_replay(tmp_path):
+    """A React Native repo has an .xcodeproj and runs its tests with jest.
+
+    Bailing out because an .xcodeproj exists somewhere would trade a real
+    check — the one this whole rule rests on — for "could not run" in every
+    such project, and in every Swift package built with `swift test`, both of
+    which find a new test file by walking the tree.
+    """
+    xcode_workspace(tmp_path)
+    (tmp_path / "__tests__").mkdir()
+    state = {"gate": "test ! -f __tests__/new.test.js"}      # jest, in miniature
+    workflows.snapshot(str(tmp_path), state)
+    (tmp_path / "__tests__" / "new.test.js").write_text("it('works', () => {})\n")
+    assert workflows.replay_fails(str(tmp_path), state) is True
+    assert "replay_note" not in state
+
+
+def test_a_new_javascript_test_beside_an_xcode_project_still_replays(tmp_path):
+    """Even under an Xcode gate, only what Xcode compiles is Xcode's problem."""
+    xcode_workspace(tmp_path)
+    (tmp_path / "__tests__").mkdir()
+    state = {"gate": XCODE_GATE}
+    workflows.snapshot(str(tmp_path), state)
+    (tmp_path / "__tests__" / "new.test.js").write_text("it('works', () => {})\n")
+    assert workflows.replay_fails(str(tmp_path), state) is True
+    assert "replay_note" not in state
+
+
+def test_the_reason_a_replay_could_not_run_reaches_the_verdict(tmp_path):
+    """"No replay was possible" on its own is a shrug; the pair needs the why."""
+    (tmp_path / "App.swift").write_text("x\n")
+    wf = workflows.get("fix")
+    state = {"gate": "true"}
+    wf.begin(str(tmp_path), state)
+    veto = wf.veto(str(tmp_path), state)
+    assert veto and "nothing to replay" in veto
+    assert "nothing to replay" in wf.proven(state)
