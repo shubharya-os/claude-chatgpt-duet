@@ -440,6 +440,74 @@ def test_a_page_taller_than_chrome_will_paint_is_clipped(browser, tmp_path, caps
     assert "as far as Chrome will paint" in capsys.readouterr().out
 
 
+def test_a_shot_of_a_sideways_page_is_the_document_not_the_zoomed_out_layout(
+        browser, tmp_path, capsys):
+    """The page `duet page check` calls an overflow, shot.
+
+    Under phone emulation a page wider than the viewport makes Chrome zoom the
+    layout out to fit it on the screen, and Page.getLayoutMetrics then reports
+    that zoomed-out layout: 917x1984 for a document 917px wide and ~150px tall.
+    Taking the height from there gave a 375x1984 PNG that was nine parts blank,
+    and clipping it to the viewport left the 542px of panel hanging off the
+    right edge — the whole reason to look at the page — out of the image.
+    """
+    write_page(tmp_path, "wide.html", body='<div class="panel">Specifications</div>',
+               styles=".panel { width: 900px; background: #eee; }")
+    assert only(check(browser, tmp_path / "wide.html"), "overflow")   # it does overflow
+
+    assert main(["page", "shot", "wide.html", "--width", "375", "-C", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    written = [line for line in out.splitlines() if line.endswith(".png")]
+    shot_width, shot_height = png_size(written[0])
+    # Wide enough to hold the panel that runs off the edge...
+    assert shot_width > 900
+    # ...and no taller than the document, rather than the 1984px Chrome's
+    # content size claims. The heading and the panel, and nothing below them.
+    assert shot_height < 500, "the shot is mostly blank canvas: %dpx" % shot_height
+    assert "wide-375w.png — page is %dpx wide at 375px, so the image is too" % shot_width in out
+
+
+def test_a_page_with_no_viewport_meta_is_still_shot_at_the_width_asked_for(
+        browser, tmp_path, capsys):
+    """Chrome lays a page with no viewport meta out at its 980px desktop
+    fallback on a 375px phone, and the content then measures a pixel past that
+    box. A pixel is rounding, not overflow: widening the shot for it would move
+    the image of every such page and show nothing. This is the page the
+    `no-viewport-meta` rule is about, so it is worth holding still."""
+    write_page(tmp_path, "bare.html", raw=NO_VIEWPORT)
+    assert main(["page", "shot", "bare.html", "--width", "375", "-C", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    written = [line for line in out.splitlines() if line.endswith(".png")]
+    assert png_size(written[0])[0] == 375
+    assert "note" not in out
+
+
+def test_a_document_with_no_body_is_measured_by_its_root_element(browser, tmp_path, capsys):
+    """An SVG opened on its own has no <body> to measure. Its root element's
+    box is the document — 1200x120 — where Chrome's content size is the
+    zoomed-out 2599px, so this is the same bug in a document with no body."""
+    (tmp_path / "logo.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="120">'
+        '<rect width="1200" height="120" fill="#eee"/></svg>', encoding="utf-8")
+    assert main(["page", "shot", "logo.svg", "--width", "375", "-C", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    written = [line for line in out.splitlines() if line.endswith(".png")]
+    shot_width, shot_height = png_size(written[0])
+    assert shot_width == 1200
+    assert shot_height < 200, "the shot is mostly blank canvas: %dpx" % shot_height
+
+
+def test_a_shot_of_a_page_that_fits_is_the_width_it_was_asked_for(browser, tmp_path, capsys):
+    """The other half: nothing moves for a page that does not overflow. A short
+    page still gets the viewport's height under it, as a visitor's screen does."""
+    write_page(tmp_path, "landing.html")
+    assert main(["page", "shot", "landing.html", "--width", "375", "-C", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    written = [line for line in out.splitlines() if line.endswith(".png")]
+    assert png_size(written[0]) == (375, page.PHONE_HEIGHT)
+    assert "note" not in out
+
+
 def test_shots_go_where_they_are_asked_to(browser, tmp_path, capsys):
     write_page(tmp_path, "landing.html")
     out = tmp_path / "look"

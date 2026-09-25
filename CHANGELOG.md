@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Fixed: `duet page shot` got the size wrong on the pages it matters most on. A page
+  with a fixed 900px panel, shot at `--width 375`, came out 375x1984 and nine parts
+  blank under a document 147px tall — and the 542px of panel running off the right
+  edge, the exact fault `duet page check` reports as `overflow`, was in no image
+  either agent ever looked at. Under phone emulation a page wider than the viewport
+  makes Chrome zoom the layout out to fit it on the screen, and `Page.getLayoutMetrics`
+  reports *that* scrolling area rather than the document: 917x1984 for a page laid out
+  at 375px and 147px tall. The shot now measures the document on the page itself —
+  `documentElement.clientWidth` is still the box the layout was done in, so the numbers
+  there are honest — and a page wider than that box is shot at its full width, with the
+  reason next to the path: `wide-375w.png — page is 917px wide at 375px, so the image
+  is too`. "Wider" is the `overflow` rule's own comparison, 1px tolerance included, so
+  a shot is widened exactly when `duet page check` says the page scrolls sideways: a
+  page with no viewport meta is laid out at Chrome's 980px desktop fallback on a phone
+  and measures 981 against that 980px box, and that pixel is rounding rather than a
+  page anyone can scroll. A document with no `<body>` at all — an SVG opened on its own
+  — is measured by its root element's box, 1200x120 where the metrics said 2599. A page
+  that fits is shot exactly as before, byte for byte (checked on this project's own
+  `docs/index.html` at 1440 and 375 and on a page with no viewport meta), blank canvas
+  under a short page included, because that is what a visitor's screen has.
+  `MAX_SHOT_HEIGHT` still stops a very tall page and now stops a runaway-wide one too,
+  saying which dimension it cut rather than turning the shot into a failure.
+
 - Fixed: a session making real progress ended in ERROR on failures that had nothing to
   do with the work. Live, one feature session lost the lead's turn to the adapter's
   hard-coded 1800s limit twice — 1,500 lines of implementation, then 1,060 lines of

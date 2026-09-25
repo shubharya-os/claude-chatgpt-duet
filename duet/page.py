@@ -677,6 +677,40 @@ SCROLL_THROUGH_JS = """
 })()
 """
 
+# What the document actually measures, asked of the page rather than of Chrome.
+# Page.getLayoutMetrics reports the *scrolling* area, and under phone emulation
+# a page wider than the viewport makes Chrome zoom the layout out to fit, which
+# stretches that area in both directions: a 917px-wide page on a 375px phone
+# reports a content size of 917x1984 for a document 147px tall. The layout
+# itself is still done at the emulated width — documentElement.clientWidth is
+# still 375 — so the honest numbers are the ones measured here, from the box
+# the content really occupies.
+DOC_SIZE_JS = """
+(function () {
+  var doc = document.documentElement, body = document.body;
+  // The box the layout was done in, which is *not* window.innerWidth: Chrome
+  // widens that to the widest thing on the page under phone emulation.
+  var viewport = doc.clientWidth || window.innerWidth;
+  var width = Math.max(doc.scrollWidth, body ? body.scrollWidth : 0, viewport);
+  var bottom = 0;
+  if (body) {
+    var rect = body.getBoundingClientRect();
+    var style = window.getComputedStyle(body);
+    bottom = rect.top + window.scrollY
+             + Math.max(rect.height, body.scrollHeight)
+             + (parseFloat(style.marginBottom) || 0);
+  } else if (doc && doc.getBoundingClientRect) {
+    // An SVG or XML document has no body at all. The root element's own box is
+    // the document then, and it is still the honest height: a 1200x120 logo
+    // measures 120 here and 2599 in the metrics.
+    var root = doc.getBoundingClientRect();
+    bottom = root.top + window.scrollY + root.height;
+  }
+  return JSON.stringify({width: Math.ceil(width), height: Math.ceil(bottom),
+                         viewport: Math.ceil(viewport)});
+})()
+"""
+
 # Two frames and a beat: long enough for a reveal to land and for layout to
 # stop moving, short enough that a gate over a dozen pages is still quick.
 # Waiting on the page's own frames rather than on the clock also means the
@@ -867,6 +901,53 @@ def shoot_page(target: str, widths: Sequence[int], out_dir: str,
     return written
 
 
+def document_size(page: Any) -> Tuple[int, int, int]:
+    """(document width, document height, layout viewport width), in CSS pixels.
+
+    Measured on the page itself rather than read off Page.getLayoutMetrics; see
+    DOC_SIZE_JS for why the two disagree on a page that overflows sideways.
+    """
+    raw = page.evaluate(DOC_SIZE_JS)
+    try:
+        measured = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise SetupError("could not measure the page: %s" % exc)
+    return (int(measured.get("width") or 0), int(measured.get("height") or 0),
+            int(measured.get("viewport") or 0))
+
+
+def overflows(doc_width: int, layout_width: int) -> bool:
+    """Does the document run past the box it was laid out in?
+
+    The `overflow` rule's own comparison, 1px tolerance included (see PROBE_JS),
+    so a shot is widened exactly when `duet page check` says the page scrolls
+    sideways. The tolerance is not a fudge: a page with no viewport meta is laid
+    out at Chrome's 980px desktop fallback on a 375px phone and measures 981
+    against a 980px box, and widening the shot for that rounding would change
+    every such page's image while showing nothing.
+    """
+    return doc_width > layout_width + 1
+
+
+def shot_box(doc_width: int, full_height: int, layout_width: int,
+             viewport_width: int) -> Tuple[int, int]:
+    """The clip for one shot: how wide and how tall the PNG should be.
+
+    A page that fits is shot exactly as it always was — the viewport's width,
+    and the height Chrome reports — so nothing changes for the pages that are
+    fine. A page wider than the box it was laid out in is shot at its own full
+    width, because that overflow is the whole reason to look at it.
+
+    "Wider" is `overflows` above, which is the `overflow` rule's comparison.
+
+    Both dimensions stop at MAX_SHOT_HEIGHT: that is Chrome's canvas limit, not
+    a fact about height, and a shot clipped and said so beats a call that fails.
+    """
+    if overflows(doc_width, layout_width):
+        return min(doc_width, MAX_SHOT_HEIGHT), max(min(full_height, MAX_SHOT_HEIGHT), 1)
+    return viewport_width, min(full_height, MAX_SHOT_HEIGHT)
+
+
 def _shoot(page: Any, url: str, width: int, directory: Path, stem: str) -> str:
     viewport_width, height, mobile = viewport_for(width)
     page.call("Page.enable")
@@ -880,15 +961,22 @@ def _shoot(page: Any, url: str, width: int, directory: Path, stem: str) -> str:
     settle(page)
     page.evaluate("window.scrollTo(0, 0)")
     settle(page)
+    doc_width, doc_height, measured_viewport = document_size(page)
     metrics = page.call("Page.getLayoutMetrics")
     content = metrics.get("cssContentSize") or metrics.get("contentSize") or {}
-    full = int(content.get("height") or height)
-    # Chrome will not paint a canvas much past this, and a phone-width page
-    # often is taller: a shot clipped and said so beats a call that fails.
-    clipped = min(full, MAX_SHOT_HEIGHT)
+    metrics_height = int(content.get("height") or height)
+    # The box the layout was really done in, as the page itself reports it —
+    # narrower than the viewport when a classic scrollbar takes a slice. The
+    # requested width is the fallback for a page too broken to measure.
+    layout_width = measured_viewport or viewport_width
+    wide = overflows(doc_width, layout_width)
+    # The document's own height where it is the honest one; Chrome's where it
+    # is the only one there is, for a document with no body to measure.
+    full_height = doc_height if (wide and doc_height > 0) else metrics_height
+    shot_width, shot_height = shot_box(doc_width, full_height, layout_width, viewport_width)
     data = page.call("Page.captureScreenshot", {
         "format": "png", "captureBeyondViewport": True,
-        "clip": {"x": 0, "y": 0, "width": viewport_width, "height": clipped, "scale": 1},
+        "clip": {"x": 0, "y": 0, "width": shot_width, "height": shot_height, "scale": 1},
     }, timeout=60)
     raw = base64.b64decode(data.get("data") or "")
     if not raw:
@@ -898,9 +986,17 @@ def _shoot(page: Any, url: str, width: int, directory: Path, stem: str) -> str:
         path.write_bytes(raw)
     except OSError as exc:
         raise SetupError("could not write %s: %s" % (path, exc))
-    if clipped < full:
+    if wide and shot_width < doc_width:
+        print(ui.dim("   note  %s is %dpx wide; the shot stops at %dpx, which is as far "
+                     "as Chrome will paint" % (path.name, doc_width, shot_width)))
+    elif wide:
+        # Said next to the path because the image is not the width that was
+        # asked for, and an agent looking at it should know why.
+        print(ui.dim("   note  %s — page is %dpx wide at %dpx, so the image is too"
+                     % (path.name, doc_width, width)))
+    if shot_height < full_height:
         print(ui.dim("   note  %s is %dpx tall; the shot stops at %dpx, which is as far "
-                     "as Chrome will paint" % (path.name, full, clipped)))
+                     "as Chrome will paint" % (path.name, full_height, shot_height)))
     return str(path)
 
 

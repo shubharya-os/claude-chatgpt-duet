@@ -14,6 +14,7 @@ cases below exist only to hold that line.
 """
 
 import argparse
+import base64
 import json
 
 import pytest
@@ -366,3 +367,170 @@ def test_page_with_no_subcommand_explains_the_format(capsys):
 ])
 def test_the_shot_command_follows_the_gate(gate, expected):
     assert page.shot_command_for(gate) == expected
+
+
+# -- how big a shot comes out ------------------------------------------------
+# A shot needs Chrome to take it, but *what size to take it at* is a decision
+# made from a handful of numbers, and that decision is where the sizing bug
+# was. These drive the real `shoot_page` against a scripted CDP page, so every
+# layout — a page that fits, one that overflows sideways, one too big to paint
+# — is testable without a browser. test_page_chrome.py takes the same pages for
+# real and looks at the PNG that comes back.
+
+ONE_PIXEL_PNG = base64.b64decode(
+    b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AF"
+    b"zBRqmAAAAAElFTkSuQmCC")
+
+
+class ScriptedPage:
+    """A CDP page that answers with the numbers a given layout would give."""
+
+    def __init__(self, browser):
+        self.browser = browser
+        self.session_id = "scripted"
+
+    def call(self, method, params=None, timeout=None):
+        if method == "Page.getLayoutMetrics":
+            return {"cssContentSize": dict(self.browser.content, x=0, y=0)}
+        if method == "Page.captureScreenshot":
+            self.browser.clips.append(dict((params or {}).get("clip") or {}))
+            return {"data": base64.b64encode(ONE_PIXEL_PNG).decode("ascii")}
+        return {}
+
+    def emulate(self, width, height, mobile):
+        self.browser.emulated.append((width, height, mobile))
+
+    def evaluate(self, expression, timeout=None):
+        # Every expression a shot runs — the settle wait, the scroll-through,
+        # the page's own measurement of itself — answered with the document.
+        # The two that ignore the answer do not mind getting this one.
+        return json.dumps(self.browser.document)
+
+    def close(self):
+        pass
+
+
+class ScriptedBrowser:
+    """Enough of duet.chrome.Browser for shoot_page to run against."""
+
+    def __init__(self, content, document):
+        self.content = content          # what Page.getLayoutMetrics reports
+        self.document = document        # what the page measures on itself
+        self.clips = []
+        self.emulated = []
+
+    def new_page(self):
+        return ScriptedPage(self)
+
+    def wait_for(self, *args, **kwargs):
+        return {}
+
+    def drain(self, *args, **kwargs):
+        pass
+
+    def forget_events(self):
+        pass
+
+
+def shot_clip(tmp_path, content, document, width=375):
+    """The clip `shoot_page` asks Chrome for, for one scripted layout."""
+    (tmp_path / "wide.html").write_text("<p>hi</p>", encoding="utf-8")
+    browser = ScriptedBrowser(content, document)
+    page.shoot_page(str(tmp_path / "wide.html"), [width], str(tmp_path / "shots"),
+                    browser=browser)
+    return browser.clips[0]
+
+
+# What a real Chrome reports for a 900px panel on a 375px phone: the document
+# is 917px wide and 147px tall, and the layout metrics describe the layout
+# Chrome zoomed out to fit that width on the screen — 917x1984.
+ZOOMED_OUT_METRICS = {"width": 917, "height": 1984}
+WIDE_DOCUMENT = {"width": 917, "height": 147, "viewport": 375}
+
+
+def test_a_shot_of_a_page_that_overflows_is_the_size_of_the_document(tmp_path):
+    """The two halves of the bug. Chrome's content size is the zoomed-out
+    layout's, so the height was 1984px of mostly blank canvas under a 147px
+    page; and the clip was the viewport's 375px, so the 542px of panel hanging
+    off the right edge — the exact fault `duet page check` reports — was in no
+    image anyone ever looked at."""
+    clip = shot_clip(tmp_path, ZOOMED_OUT_METRICS, WIDE_DOCUMENT)
+    assert clip["height"] == 147
+    assert clip["width"] == 917
+
+
+def test_a_shot_wider_than_asked_for_says_so_next_to_the_path(tmp_path, capsys):
+    shot_clip(tmp_path, ZOOMED_OUT_METRICS, WIDE_DOCUMENT)
+    assert ("wide-375w.png — page is 917px wide at 375px, so the image is too"
+            in capsys.readouterr().out)
+
+
+def test_a_page_that_fits_is_shot_exactly_as_it_always_was(tmp_path, capsys):
+    """The width asked for and the height Chrome reports — blank canvas below a
+    short page included, because that is the page a visitor gets. Nothing about
+    the pages that are fine is allowed to move."""
+    clip = shot_clip(tmp_path, {"width": 375, "height": 4200},
+                     {"width": 375, "height": 4198, "viewport": 375})
+    assert (clip["width"], clip["height"]) == (375, 4200)
+    assert "note" not in capsys.readouterr().out
+
+
+def test_a_scrollbar_taking_a_slice_is_not_read_as_overflow(tmp_path):
+    """A classic scrollbar leaves documentElement.clientWidth at 1425 in a
+    1440px window. The page fits; the shot is still 1440 wide."""
+    clip = shot_clip(tmp_path, {"width": 1440, "height": 3000},
+                     {"width": 1425, "height": 2990, "viewport": 1425}, width=1440)
+    assert (clip["width"], clip["height"]) == (1440, 3000)
+
+
+def test_a_page_with_no_viewport_meta_is_not_read_as_overflow(tmp_path, capsys):
+    """The numbers a real Chrome gives for a page with no viewport meta at
+    375px: it is laid out at Chrome's 980px desktop fallback, and the content
+    measures 981 against that 980px box. That pixel is rounding, not a page
+    that scrolls sideways — widening the shot for it would move the image of
+    every such page and show nothing. `duet page check` tolerates the same
+    pixel, so the shot and the check agree on what overflow is."""
+    clip = shot_clip(tmp_path, {"width": 981, "height": 2123},
+                     {"width": 981, "height": 2139, "viewport": 980})
+    assert (clip["width"], clip["height"]) == (375, 2123)
+    assert "note" not in capsys.readouterr().out
+
+
+def test_two_pixels_past_the_layout_box_is_overflow(tmp_path):
+    """The other side of that tolerance: one pixel is rounding, two is the
+    page. Same threshold as the overflow rule, so neither can drift alone."""
+    clip = shot_clip(tmp_path, {"width": 982, "height": 2123},
+                     {"width": 982, "height": 300, "viewport": 980})
+    assert (clip["width"], clip["height"]) == (982, 300)
+
+
+def test_a_wide_document_with_nothing_to_measure_falls_back_to_chrome(tmp_path):
+    """A document that measures as nothing tall — one Chrome renders but the
+    probe cannot size — keeps Chrome's height. A 1px image would be worse than
+    the too-tall one this used to give."""
+    clip = shot_clip(tmp_path, ZOOMED_OUT_METRICS,
+                     {"width": 917, "height": 0, "viewport": 375})
+    assert (clip["width"], clip["height"]) == (917, 1984)
+
+
+def test_a_wide_page_is_still_clipped_at_the_height_chrome_will_paint(
+        tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(page, "MAX_SHOT_HEIGHT", 1200)
+    clip = shot_clip(tmp_path, ZOOMED_OUT_METRICS,
+                     {"width": 917, "height": 5000, "viewport": 375})
+    assert (clip["width"], clip["height"]) == (917, 1200)
+    out = capsys.readouterr().out
+    assert "is 5000px tall; the shot stops at 1200px" in out
+
+
+def test_a_page_wider_than_chrome_will_paint_is_clipped_and_says_so(
+        tmp_path, capsys, monkeypatch):
+    """Same canvas limit, the other way round: a runaway 4000px page must not
+    turn a shot into a failure, and the note must not claim the full width."""
+    monkeypatch.setattr(page, "MAX_SHOT_HEIGHT", 1200)
+    clip = shot_clip(tmp_path, ZOOMED_OUT_METRICS,
+                     {"width": 4000, "height": 300, "viewport": 375})
+    assert (clip["width"], clip["height"]) == (1200, 300)
+    out = capsys.readouterr().out
+    assert "is 4000px wide; the shot stops at 1200px" in out
+    assert "so the image is too" not in out
