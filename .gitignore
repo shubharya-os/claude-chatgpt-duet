@@ -10,3 +10,6 @@ venv/
 .duet/cache.json
 .pytest_cache/
 .DS_Store
+
+# duet's own session logs and snapshots, written when duet runs on itself
+.duet/
