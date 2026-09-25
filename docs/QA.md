@@ -7,7 +7,7 @@ evidence and is labelled as such.
 
 ## Automated suite
 
-555 tests, no network and no credentials required. `pytest -q` from a clean clone.
+563 tests, no network and no credentials required. `pytest -q` from a clean clone.
 Counts in this file are as-of their section; this header tracks the current suite.
 
 | area | what is pinned |
@@ -256,6 +256,13 @@ arbitration, about a session that had already been decided. Two fixes came out o
   executable — and falls back to `<this python> -m pytest`, which is where pytest
   usually is. If nothing runs, there is no gate and duet says so.
 - `duet run` refuses a gate that cannot start, in a second, naming both ways out.
+
+That first fix was itself only half of it, and a later session caught the other half:
+`<this python>` is duet's own virtualenv, which under pipx or `~/.duet/venv` holds duet
+and nothing else — so an ordinary Python project with pytest in `.venv/` was still told
+no test command existed. Detection now looks in the project's own `.venv/`, `venv/` or
+`env/` first, ahead of both PATH and duet's interpreter, because that is the only pytest
+that can import the project's dependencies.
 
 On the original bug they concluded something better than what was asked for. Nothing
 codex offers reports remaining quota without spending a model call, and a probe that

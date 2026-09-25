@@ -1194,7 +1194,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     Path(root).mkdir(parents=True, exist_ok=True)
 
     task = "Write greet.py: a function greet(name) returning 'Hello, <name>!' that rejects an empty name."
-    gate = "%s greet.py" % sys.executable
+    gate = "%s greet.py" % shlex.quote(sys.executable)
 
     good = (
         "def greet(name):\n"

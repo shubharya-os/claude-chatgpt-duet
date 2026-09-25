@@ -124,25 +124,87 @@ def _runnable(command: str, root: str) -> bool:
     return candidate.is_file() and os.access(str(candidate), os.X_OK)
 
 
-def _python_module_form(command: str) -> Optional[str]:
-    """`pytest -q` becomes `<this python> -m pytest -q`, when that works.
+# Where a Python project keeps its own virtualenv, in the order a project with
+# more than one most likely means. This is where the project's dependencies
+# are, so its pytest is the one that can actually import the code under test.
+VENV_DIRS = (".venv", "venv", "env")
 
-    pytest is usually installed into a virtualenv rather than onto PATH, and
-    the interpreter running duet is the one most likely to have it.
+
+def _venv_bin(venv: Path) -> Path:
+    """The directory a virtualenv puts its executables in on this OS."""
+    return venv / ("Scripts" if os.name == "nt" else "bin")
+
+
+def _can_start(argv: List[str]) -> bool:
+    """Does this program exist and answer `--version`?
+
+    The same rule the rest of detection follows: a gate that cannot start fails
+    every round and vetoes both agents, so nothing is handed back unproven.
+    """
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def _tool_word(name: str) -> str:
+    return name + ".exe" if os.name == "nt" else name
+
+
+def _project_venv_form(command: str, base: Path) -> Optional[str]:
+    """`pytest -q` becomes the project's own virtualenv's pytest, if it has one.
+
+    Preferred over every other way of spelling pytest, including one on PATH
+    and the interpreter running duet: the project's virtualenv is the only one
+    holding the project's dependencies, and a pytest that cannot import the
+    code under test collects errors every round just as surely as one that is
+    missing. duet installed with pipx or by its own installer has a virtualenv
+    of its own that shares nothing with the project's.
     """
     first, _, rest = command.partition(" ")
     if first not in ("pytest",):
         return None
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-m", first, "--version"],
-            capture_output=True, text=True, timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
+    suffix = (" " + rest) if rest else ""
+    for name in VENV_DIRS:
+        bindir = _venv_bin(base / name)
+        if not bindir.is_dir():
+            continue
+        tool = bindir / _tool_word(first)
+        if tool.is_file() and _can_start([str(tool), "--version"]):
+            return "%s%s" % (shlex.quote(str(tool)), suffix)
+        python = bindir / _tool_word("python")
+        if python.is_file() and _can_start([str(python), "-m", first, "--version"]):
+            return "%s -m %s%s" % (shlex.quote(str(python)), first, suffix)
+    return None
+
+
+def _python_module_form(command: str) -> Optional[str]:
+    """`pytest -q` becomes `<a python that has pytest> -m pytest -q`.
+
+    pytest is usually installed into a virtualenv rather than onto PATH. The
+    interpreter running duet is tried first, then a python3 on PATH — because
+    duet installed with pipx, or by its own installer into ~/.duet/venv, lives
+    in a virtualenv that has duet and nothing else, and used to leave an
+    ordinary Python project with no gate at all.
+
+    The path is shell-quoted: an interpreter under a directory with a space in
+    it produced a gate whose first word was half a path, which duet then
+    refused to start a session on.
+    """
+    first, _, rest = command.partition(" ")
+    if first not in ("pytest",):
         return None
-    if proc.returncode != 0:
-        return None
-    return "%s -m %s%s" % (sys.executable, first, (" " + rest) if rest else "")
+    candidates = [sys.executable]
+    for name in ("python3", "python"):
+        found = shutil.which(name)
+        if found and found not in candidates:
+            candidates.append(found)
+    for python in candidates:
+        if python and _can_start([python, "-m", first, "--version"]):
+            return "%s -m %s%s" % (
+                shlex.quote(python), first, (" " + rest) if rest else "")
+    return None
 
 
 # Where a static site keeps the page a visitor lands on. A website has no test
@@ -208,9 +270,17 @@ def detect(root: str) -> Optional[str]:
     base = Path(root).expanduser().resolve()
 
     def usable(command: Optional[str]) -> Optional[str]:
-        """Only hand back a command that can actually start."""
+        """Only hand back a command that can actually start.
+
+        The project's own virtualenv comes first for pytest — see
+        `_project_venv_form`; for everything else this is the old order, PATH
+        and then a relative launcher in the project.
+        """
         if not command:
             return None
+        local = _project_venv_form(command, base)
+        if local:
+            return local
         if _runnable(command, str(base)):
             return command
         return _python_module_form(command)

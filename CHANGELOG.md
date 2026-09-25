@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Fixed: an ordinary Python project got "no test command was found" whenever duet's own
+  interpreter had no pytest — which is exactly how duet is installed by pipx or by
+  `install.sh` into `~/.duet/venv`. Detection only ever tried `pytest` on PATH and then
+  `<duet's python> -m pytest`; it never looked at the project's own virtualenv, where the
+  project's pytest and dependencies actually live. It now prefers `.venv/`, `venv/` or
+  `env/` (`bin/pytest`, else `bin/python -m pytest`; `Scripts\` on Windows) over every
+  other spelling — duet's virtualenv shares nothing with the project's, so its pytest
+  could not import the code under test even when it existed — and falls back to a
+  `python3` on PATH that has pytest. Nothing is handed back that has not been seen to
+  answer `--version`, and the interpreter path is now shell-quoted, so a project under
+  `~/My Projects/` no longer yields a gate whose first word is half a path.
 - `duet page`: the gate a website can have. `duet page check <file-or-url>` renders the
   page in headless Chrome at 1440 and 375 (the phone one emulated at exactly that
   viewport width, which a Chrome window cannot be) and prints one line per fault —

@@ -5,10 +5,16 @@ verification and is not. So every case here is either a real signal or a None.
 """
 
 import json
+import sys
 
 import pytest
 
 from duet.gate import describe, detect
+
+# Captured at import. Several tests below replace `sys.executable` with an
+# interpreter that has no pytest, and that patch is visible everywhere — so
+# the real one has to be remembered before any of them runs.
+REAL_PYTHON = sys.executable
 
 
 @pytest.fixture
@@ -136,6 +142,128 @@ def test_pytest_falls_back_to_the_interpreter_that_has_it(tmp_path, monkeypatch)
     found = detect(str(tmp_path))
     assert found is not None
     assert "-m pytest" in found and found.endswith("-q")
+
+
+# --- the project's own virtualenv is where its pytest lives -----------------
+
+def _executable(path, body="#!/bin/sh\nexit 0\n"):
+    """A stand-in for a program that starts and answers --version."""
+    import stat
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path
+
+
+def _a_python_project(root):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (root / "tests").mkdir(exist_ok=True)
+    return root
+
+
+@pytest.fixture
+def duet_has_no_pytest(tmp_path_factory, monkeypatch):
+    """duet installed by pipx, or by its own installer into ~/.duet/venv.
+
+    That virtualenv holds duet and nothing else, so `<this python> -m pytest`
+    does not start — which was the whole of duet's fallback.
+    """
+    fake = _executable(tmp_path_factory.mktemp("duet-venv") / "python",
+                       "#!/bin/sh\nexit 1\n")
+    monkeypatch.setattr("duet.gate.sys.executable", str(fake))
+    return fake
+
+
+def test_the_projects_own_virtualenv_is_found_when_duet_has_no_pytest(
+        tmp_path, monkeypatch, duet_has_no_pytest):
+    """The reported bug: an ordinary Python project, pytest in `.venv`, duet
+    installed with pipx — and duet reported no test command at all, so `duet
+    add` refused to start on a project that tests itself fine."""
+    _a_python_project(tmp_path)
+    pytest_exe = _executable(tmp_path / ".venv" / "bin" / "pytest")
+
+    monkeypatch.setattr("duet.gate.shutil.which", lambda name: None)
+    assert detect(str(tmp_path)) == "%s -q" % pytest_exe.resolve()
+
+
+def test_the_projects_virtualenv_beats_duets_interpreter(tmp_path, monkeypatch):
+    """Even when duet's own python has pytest, it is the wrong one: it cannot
+    import the project's dependencies, so the gate would collect errors every
+    round. The project's virtualenv is where those dependencies are."""
+    _a_python_project(tmp_path)
+    pytest_exe = _executable(tmp_path / ".venv" / "bin" / "pytest")
+
+    monkeypatch.setattr("duet.gate.shutil.which", lambda name: None)
+    assert detect(str(tmp_path)) == "%s -q" % pytest_exe.resolve()
+
+
+def test_the_projects_virtualenv_beats_a_pytest_on_path(tmp_path, tools_present):
+    """And it beats a pytest on PATH too, which is the case that bites.
+
+    A global pytest — homebrew, pipx, the system one — starts perfectly well
+    and then cannot import the project's dependencies, so the gate collects
+    errors every round: the same unwinnable session `_runnable` exists to
+    prevent, arrived at from the other side. Pinned because nothing else in
+    this file would notice `_project_venv_form` being moved after `_runnable`
+    in `usable()`; every other venv case here has PATH empty.
+    """
+    _a_python_project(tmp_path)
+    pytest_exe = _executable(tmp_path / ".venv" / "bin" / "pytest")
+
+    assert detect(str(tmp_path)) == "%s -q" % pytest_exe.resolve()
+
+
+@pytest.mark.parametrize("venv", ["venv", "env"])
+def test_venv_and_env_count_too_and_python_dash_m_is_enough(
+        tmp_path, monkeypatch, duet_has_no_pytest, venv):
+    """A virtualenv with pytest installed as a library but no `bin/pytest`
+    console script still runs the tests, via `bin/python -m pytest`."""
+    _a_python_project(tmp_path)
+    python = _executable(tmp_path / venv / "bin" / "python")
+
+    monkeypatch.setattr("duet.gate.shutil.which", lambda name: None)
+    assert detect(str(tmp_path)) == "%s -m pytest -q" % python.resolve()
+
+
+def test_a_python3_on_path_is_the_last_resort(tmp_path, monkeypatch,
+                                              duet_has_no_pytest):
+    """No project virtualenv and duet's python has no pytest — but the machine
+    has a python3 that does. That is still a gate; reporting none is not."""
+    _a_python_project(tmp_path)
+    monkeypatch.setattr(
+        "duet.gate.shutil.which",
+        lambda name: REAL_PYTHON if name in ("python3", "python") else None)
+    assert detect(str(tmp_path)) == "%s -m pytest -q" % REAL_PYTHON
+
+
+def test_a_virtualenv_without_pytest_is_not_used(tmp_path, monkeypatch):
+    """Conservative as before: the directory existing proves nothing. Nothing
+    is handed back that has not been seen to start."""
+    _a_python_project(tmp_path)
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    _executable(tmp_path / ".venv" / "bin" / "python", "#!/bin/sh\nexit 1\n")
+
+    monkeypatch.setattr("duet.gate.shutil.which", lambda name: None)
+    assert detect(str(tmp_path)) == "%s -m pytest -q" % REAL_PYTHON
+
+
+def test_a_virtualenv_path_with_a_space_is_quoted(tmp_path, monkeypatch,
+                                                  duet_has_no_pytest):
+    """`duet` is often run on a project under "~/My Projects/…". An unquoted
+    path makes the gate's first word half a path, and duet refuses to start a
+    session on a gate whose program it cannot find."""
+    from duet.gate import _first_word, why_unusable
+
+    root = _a_python_project(tmp_path / "my project")
+    pytest_exe = _executable(root / ".venv" / "bin" / "pytest")
+
+    monkeypatch.setattr("duet.gate.shutil.which", lambda name: None)
+    found = detect(str(root))
+    assert found is not None
+    assert _first_word(found) == str(pytest_exe.resolve())
+    assert why_unusable(found, str(root)) is None
 
 
 def test_a_relative_launcher_in_the_project_counts(tmp_path, monkeypatch):
