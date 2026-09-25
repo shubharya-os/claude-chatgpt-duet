@@ -136,6 +136,7 @@ def turn_prompt(
     digest: str,
     workspace_view: str,
     gate_text: str,
+    page_shot: str = "",
     against_you: Sequence[Issue],
     yours: Sequence[Issue],
     history: Sequence[str],
@@ -193,6 +194,8 @@ def turn_prompt(
         for path, content in files.items():
             parts.append("\n=== FILE: %s ===\n%s" % (path, content))
     parts.append("\n=== ACCEPTANCE GATE ===\n%s" % gate_text)
+    if page_shot.strip():
+        parts.append("\n=== LOOK AT THE PAGE ===\n%s" % PAGE_SHOT_NOTE.format(command=page_shot.strip()))
 
     if history:
         parts.append("\n=== SESSION SO FAR ===\n%s" % "\n".join(history[-14:]))
@@ -209,6 +212,20 @@ def turn_prompt(
     )
     return "\n".join(parts)
 
+
+PAGE_SHOT_NOTE = """\
+The gate renders this page in a real browser, and you are allowed to run:
+
+    {command}
+
+It writes one full-page PNG per width and prints the paths. Open them and look
+at the result, rather than reading the CSS and imagining it. The rules the gate
+checks are objective and narrow — a page can pass every one of them and still
+be a mess, and the prototype of this gate was written after exactly that
+happened. Neither of you should sign off on a page you have only read.
+
+Anything you deliberately want left empty or tiny can carry `data-duet-ignore`,
+which exempts it and everything inside it."""
 
 NORMAL_DIRECTIVE = """\
 Do the most useful next thing, then report it. Concretely:

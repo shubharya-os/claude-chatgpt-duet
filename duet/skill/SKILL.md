@@ -50,6 +50,14 @@ rule the harness checks, so the right one matters more than the wording:
 {{DUET}} fix "slugify keeps punctuation: 'Hello, World!' gives 'hello,-world!'"
 ```
 
+**A website has a gate too.** When the project is a page rather than a test suite, use
+`{{DUET}} page check index.html` as the gate: it renders the page in headless Chrome at a
+laptop width and a phone width and fails on what actually rendered — overflow, script
+errors, contrast below WCAG AA, collapsed controls, blank strips, dead anchors, broken
+local images. duet detects it by itself for a project with an `index.html` and no test
+command. `{{DUET}} page shot index.html` writes one full-page PNG per width; open them
+rather than reading the CSS and imagining it.
+
 `fix`, `add` and `refactor` need the project's test command; if duet cannot find one,
 it says so and stops, and you should pass `--gate`. Tell the user which rule the
 session was held to when you report back — "both agreed, and the tests were replayed

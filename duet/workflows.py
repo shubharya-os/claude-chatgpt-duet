@@ -28,6 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from duet.page import PAGE_RULES
 from duet.workspace import SKIP_DIRS as WORKSPACE_SKIP_DIRS
 
 # What a test file looks like, across the ecosystems duet detects gates for.
@@ -83,6 +84,13 @@ def is_test_dir(part: str) -> bool:
 
 
 def _is_test(rel: Path) -> bool:
+    # On a website the page rules *are* the test suite: `duet page check` runs
+    # them, and a rule that fails on the original page and passes now is
+    # exactly what `duet add` and `duet fix` ask for. Without this, a session
+    # on a site has nothing the replay can recognise, and every finish is
+    # reported as "no replay was possible".
+    if rel.name == PAGE_RULES:
+        return True
     if any(is_test_dir(part) for part in rel.parts[:-1]):
         return rel.suffix not in ("", ".md", ".txt", ".json", ".lock")
     # fnmatchcase, not Path.match: the globs distinguish `FooTest.cs` from

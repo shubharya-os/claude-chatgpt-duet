@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- `duet page`: the gate a website can have. `duet page check <file-or-url>` renders the
+  page in headless Chrome at 1440 and 375 (the phone one emulated at exactly that
+  viewport width, which a Chrome window cannot be) and prints one line per fault —
+  horizontal overflow, script errors, text below WCAG AA against the background it really
+  sits on, controls under the 24px target size, tall blocks that paint nothing, dead
+  in-page links, local images that did not load, a missing viewport meta. Exit 1 for page
+  faults, exit 3 for "could not run", so a machine with no Chrome never looks like a
+  broken page. `duet page shot` writes one full-page PNG per width, so both agents can
+  see the page instead of reading its CSS. The brand-kit half — this heading font, that
+  minimum tap target, never this colour, never that word — lives in `duet-page.json`,
+  where an unknown key is an error rather than a rule that quietly is not checked.
+  A project with no test command but an `index.html` (root, `site/`, `public/`, `docs/`
+  or `dist/`) now gets a page check as its detected gate, `duet-page.json` counts as that
+  site's test suite for `duet add` and `duet fix`, and a session whose gate is a page
+  check tells both agents to look at the screenshots. Chrome is driven over the DevTools
+  protocol on file descriptors 3 and 4 with nothing but the standard library, on a
+  throwaway profile, with outside hosts blocked unless `--allow-network`; it is found via
+  `DUET_CHROME`, PATH, then where it installs. Not supported on Windows, which it says.
 - Fixed: duet could not see a Swift test. Test directories were matched
   case-sensitively, so Xcode's conventional `Tests/` never counted, and no glob knew
   about `*Tests.swift` — an iOS repo looked like a repo with no tests at all, so `add`

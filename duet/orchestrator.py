@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from duet import prompts, workflows
+from duet import page, prompts, workflows
 from duet.adapters import build as build_adapter
 from duet.adapters.base import Adapter
 from duet.config import Config
@@ -243,6 +243,8 @@ class Orchestrator:
             digest=digest,
             workspace_view=self.workspace.diff(),
             gate_text=gate.render(),
+            # When the gate is a page check, both agents can also see the page.
+            page_shot=page.shot_command_for(self.config.gate),
             against_you=self.state.issues_against(agent),
             yours=[i for i in self.state.open_issues() if i.raised_by == agent],
             history=self.history,

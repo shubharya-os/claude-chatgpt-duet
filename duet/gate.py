@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from duet.page import PAGE_RULES
+
 # Ordered: the first that matches a real signal in the project wins.
 CANDIDATES: List[Tuple[str, str]] = [
     ("Makefile", "make test"),
@@ -143,6 +145,60 @@ def _python_module_form(command: str) -> Optional[str]:
     return "%s -m %s%s" % (sys.executable, first, (" " + rest) if rest else "")
 
 
+# Where a static site keeps the page a visitor lands on. A website has no test
+# command, so `duet page check` is the gate it can have instead — and a session
+# with a gate is the only kind where "done" is not just two opinions.
+PAGE_DIRS = ("", "site", "public", "docs", "dist")
+PAGE_FILE = "index.html"
+
+
+def duet_command() -> str:
+    """How to invoke duet from inside a gate.
+
+    `duet` is not always on PATH — a gate runs with a minimal one, and duet is
+    often installed inside a virtualenv — and a gate that cannot start fails
+    every round, which blocks both sign-offs however good the work is. So the
+    detected command names the interpreter running duet when the name is not
+    there to be found.
+    """
+    if shutil.which("duet"):
+        return "duet"
+    return "%s -m duet" % shlex.quote(sys.executable)
+
+
+def page_gate(root: str) -> Optional[str]:
+    """`duet page check <page>` for this project, or None if it is not a site.
+
+    The page comes from duet-page.json's "page" when it names one — a project
+    that has written its own page rules has already said which page it means —
+    and otherwise from the index.html a static site is laid out around.
+    """
+    base = Path(root).expanduser().resolve()
+    page = ""
+    rules = base / PAGE_RULES
+    if rules.is_file():
+        try:
+            data = json.loads(rules.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        named = data.get("page") if isinstance(data, dict) else None
+        if isinstance(named, str) and named.strip():
+            named = named.strip()
+            if re.match(r"^(https?|file):", named) or (base / named).is_file():
+                page = named
+    if not page:
+        for directory in PAGE_DIRS:
+            candidate = (base / directory / PAGE_FILE) if directory else (base / PAGE_FILE)
+            if candidate.is_file():
+                page = candidate.relative_to(base).as_posix()
+                break
+    if not page:
+        return None
+    # Runnable by construction: duet_command() only says "duet" when the name
+    # resolves, so this never needs the check the other candidates get.
+    return "%s page check %s" % (duet_command(), page)
+
+
 def detect(root: str) -> Optional[str]:
     """A test command this project plausibly has, or None.
 
@@ -184,7 +240,10 @@ def detect(root: str) -> Optional[str]:
 
     if _has_python_tests(base):
         return usable("pytest -q")
-    return None
+    # Last, not first: a project that has real tests is judged by them. This is
+    # for the project that has none — a website — which would otherwise run on
+    # argument alone.
+    return page_gate(str(base))
 
 
 def why_unusable(command: str, root: str) -> Optional[str]:
@@ -210,6 +269,8 @@ def why_unusable(command: str, root: str) -> Optional[str]:
 
 
 def describe(command: Optional[str]) -> str:
+    if command and " page check " in " %s " % command:
+        return "no test command, but there is a page to check: %s" % command
     if command:
         return "found a test command: %s" % command
     return (

@@ -358,6 +358,78 @@ after every turn. Neither agent may finish while it fails, and neither is ever *
 whether it passed — they are both shown the actual output. Without it, the two of them
 can only agree by argument.
 
+### Websites: `duet page`
+
+A website usually has no test command, which is exactly the case where two agents agree
+by argument about CSS neither of them has seen rendered. `duet page` is the gate a
+website can have: it opens the page in headless Chrome at a laptop width and a phone
+width and prints one line per fault, measured on what actually rendered.
+
+```bash
+duet page check index.html              # 1440 and 375 by default
+duet page check https://127.0.0.1:8080/ --allow-network --width 1440,414,375
+duet page shot index.html               # one full-page PNG per width, into .duet/shots/
+```
+
+Exit 0 when the page is clean, 1 when it has faults, 3 when duet could not run the check
+at all — no Chrome, no such page, a rules file that does not parse. That third code
+matters: a session that reads "no Chrome on this machine" as "the page is broken" spends
+its rounds hunting a bug that is not there.
+
+The built-in rules are the ones that can be measured rather than argued about:
+
+| rule | what it means |
+|---|---|
+| `overflow` | the document is wider than the viewport, so the page scrolls sideways |
+| `script-error` | an uncaught exception or unhandled rejection while the page loaded |
+| `contrast` | visible text below WCAG AA (4.5:1, or 3:1 for large text) against the background it really sits on |
+| `collapsed-control` | an input, select, textarea or button under the 24px WCAG 2.5.8 target size |
+| `empty-strip` | a visible block 48px or taller with no text, no media, no background, no border |
+| `dead-link` | `href="#x"` where nothing on the page has id `x` |
+| `broken-image` | a local image that did not load |
+| `no-viewport-meta` | no `<meta name="viewport">`, so a phone lays the page out at desktop width |
+
+Two of those are there because a prototype of this found them in a page whose author had
+read the CSS a dozen times: a blank strip under a grid on every load, and an email field
+that collapsed to 20px tall on phones and nowhere else. Anything you meant to leave empty
+or tiny carries `data-duet-ignore`, which exempts it and everything inside it.
+
+Your brand kit is not built in, because it is different for every project. It goes in
+`duet-page.json` at the project root (or `--rules PATH`):
+
+```json
+{
+  "page": "site/index.html",
+  "styles": [
+    {"selector": "h1, h2", "property": "font-family", "equals": "Metro Sans"},
+    {"selector": ".cta",   "property": "min-height",  "at_least": 44},
+    {"selector": "body",   "property": "font-size",   "one_of": [16, 17, 18]}
+  ],
+  "forbid_text_colors": ["#7a0000"],
+  "forbid_text": ["\\bcoming soon\\b"]
+}
+```
+
+Every check is against the *computed* style, so a font stack matches on its first family
+and `min-height` is whatever the cascade ended up at. An unknown key is an error (exit 3),
+not a comment: a mistyped rule that is silently ignored is worse than no rule, because it
+looks like it is being checked. `duet page` with no subcommand prints the whole format.
+
+This is wired into sessions, not just the command line. A project with no test command
+but an `index.html` (at the root, or in `site/`, `public/`, `docs/` or `dist/`) gets
+`duet page check <that page>` as its detected gate, and a `duet-page.json` says which
+page it means. When the gate is a page check, both agents are told to run `duet page shot`
+and **look at the screenshots**, because a page can pass every rule above and still be a
+mess. And `duet-page.json` counts as the site's test suite, so `duet add` and `duet fix`
+on a website are held to the same rule as anywhere else: the page rule is replayed against
+the page as it was, and must fail there.
+
+Chrome is driven over the DevTools protocol on a throwaway profile, with no Node and no
+Playwright — the standard library only. Outside hosts are blocked unless you pass
+`--allow-network`, so a gate's answer never depends on someone else's CDN being up.
+Chrome is found via `DUET_CHROME`, then PATH, then where it installs on macOS and Linux.
+Windows is not supported and says so rather than failing halfway.
+
 ---
 
 ## Install
@@ -549,6 +621,8 @@ duet fix "bug"       # no sign-off until the tests catch the bug in the original
 duet add "feature"   # no sign-off until a test fails without the feature
 duet refactor "..."  # existing tests may not be edited; refused on a red suite
 duet plan "goal"     # argue out PLAN.md; no code may change
+duet page check ...  # the gate a website can have: render it, print every fault
+duet page shot ...   # one full-page PNG per width, so both agents can look
 duet resume          # carry on a session that died, keeping the argument
 duet status          # what is the session doing right now (works mid-run)
 duet verify          # does the last sign-off still hold? re-runs the gate
@@ -612,7 +686,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-449 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+555 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

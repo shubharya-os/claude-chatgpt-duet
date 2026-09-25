@@ -20,6 +20,7 @@ from duet.adapters import build as build_adapter
 from duet.adapters.base import Adapter
 from duet import gate as gate_detect
 from duet import build as build_cmd
+from duet import page as page_check
 from duet import workflow_commands
 from duet import from_ecc
 from duet.config import (
@@ -2328,6 +2329,41 @@ def build_parser() -> argparse.ArgumentParser:
                 help="two turns: a full draft, then one review that may edit it — "
                      "minutes, not rounds; reported as reviewed, not as signed off by both")
         p_flow.set_defaults(func=lambda a, _n=name: workflow_commands.run(a, _n))
+
+    p_page = sub.add_parser(
+        "page",
+        help="check or screenshot a web page in a real browser — the gate a website can have",
+    )
+    page_sub = p_page.add_subparsers(dest="page_command")
+
+    def page_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("page", nargs="?",
+                       help="the file or URL to render (default: \"page\" in %s)" % page_check.PAGE_RULES)
+        p.add_argument("-C", "--root", default=".", help="project directory (default: .)")
+        p.add_argument("--width", default="",
+                       help="viewport widths in px (default: %s). Anything under %d is "
+                            "emulated as a phone at exactly that width."
+                            % (",".join(str(w) for w in page_check.DEFAULT_WIDTHS),
+                               page_check.PHONE_MAX_WIDTH))
+        p.add_argument("--allow-network", action="store_true",
+                       help="let the page reach other hosts (they are blocked by default, "
+                            "so a gate's answer does not depend on the network)")
+
+    p_page_check = page_sub.add_parser(
+        "check", help="render the page and print one line per fault (exit 1 if any)")
+    page_args(p_page_check)
+    p_page_check.add_argument("--rules", metavar="PATH",
+                              help="this project's own rules (default: %s, if it is there)"
+                                   % page_check.PAGE_RULES)
+    p_page_check.set_defaults(func=page_check.check_cmd)
+
+    p_page_shot = page_sub.add_parser(
+        "shot", help="write one full-page PNG per width and print the paths")
+    page_args(p_page_shot)
+    p_page_shot.add_argument("--out", metavar="DIR",
+                             help="where to write them (default: %s)" % page_check.SHOT_DIR)
+    p_page_shot.set_defaults(func=page_check.shot_cmd)
+    p_page.set_defaults(func=page_check.run)
 
     p_from = sub.add_parser("from-ecc",
                             help="see what you actually use from ECC, keep it, and switch")

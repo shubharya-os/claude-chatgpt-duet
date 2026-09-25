@@ -18,7 +18,8 @@ each workflow is held to. Use the `duet` skill, or run it directly:
 
 **Do it directly, without duet,** for: questions and explanations; reading or exploring
 code; one-line and mechanical edits (typos, renames, formatting, config values); any
-project with no test command; and whenever the user says to just do it. A duet
+project with no test command and no page to render — a website has a gate,
+`{{DUET}} page check index.html`; and whenever the user says to just do it. A duet
 session takes minutes and two agents' worth of usage — spend it where a second
 opinion and a checked rule can catch something a single pass would not.
 
