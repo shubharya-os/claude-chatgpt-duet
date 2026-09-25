@@ -17,7 +17,12 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from duet import page, prompts, workflows
 from duet.adapters import build as build_adapter
-from duet.adapters.base import Adapter
+from duet.adapters.base import (
+    DEFAULT_TURN_TIMEOUT,
+    Adapter,
+    human_duration,
+    transient_failure,
+)
 from duet.config import Config
 from duet.consensus import DebateState, Decision
 from duet.protocol import Envelope, parse_envelope
@@ -44,6 +49,25 @@ _WRITING_COMMAND = re.compile(
     r">|\btee\b|\bsed\s+-i|\bperl\s+-\w*i|\b(?:mv|cp|rm|touch|mkdir|patch|truncate)\s"
     r"|\bgit\s+(?:apply|checkout|restore|am)\b|write_text|\bopen\([^)]*['\"][wax]"
 )
+
+
+# How long to wait between re-sending a turn that died on a transient backend
+# failure, and how many times. Five waits, a little over four minutes in total:
+# long enough to sit out the kind of outage that killed a live session (a few
+# minutes without DNS), short enough that a backend which is genuinely down is
+# reported rather than waited on.
+RETRY_BASE_DELAY = 8
+RETRY_MAX_DELAY = 120
+RETRY_ATTEMPTS = 5
+
+# Indirected so the test suite can run the retry path without sleeping through
+# it; the schedule itself is a pure function, tested as one.
+SLEEP = time.sleep
+
+
+def retry_delays(attempts: int = RETRY_ATTEMPTS) -> List[int]:
+    """The backoff schedule: 8s, 16s, 32s, 64s, 120s."""
+    return [min(RETRY_BASE_DELAY * 2 ** i, RETRY_MAX_DELAY) for i in range(max(0, attempts))]
 
 
 def refused_writes(refused: Sequence[str]) -> List[str]:
@@ -109,6 +133,13 @@ class TurnRecord:
     ingest: str = ""
     error: str = ""
     meta: Dict[str, Any] = field(default_factory=dict)
+    # A turn stopped at its time limit *after* it had changed the workspace. The
+    # work is on disk; only the report is missing. Progress, not failure.
+    cut_off: bool = False
+    # A turn that never reached the model: a transient backend failure that
+    # survived the whole backoff, with nothing changed in the workspace. It does
+    # not get to spend a round of the budget.
+    never_happened: bool = False
 
 
 class Orchestrator:
@@ -161,6 +192,14 @@ class Orchestrator:
             if command:
                 for adapter in self.adapters.values():
                     adapter.allow_gate(command)
+        # The turn limit the session was started (or resumed) with. Applied to
+        # every adapter, including ones handed in ready-made, so there is one
+        # answer to "how long does a turn get" and the agents can be told it.
+        if config.turn_timeout:
+            for adapter in self.adapters.values():
+                adapter.set_turn_timeout(config.turn_timeout)
+        self.sleep = SLEEP
+        self.retry_delays = retry_delays()
 
     # -- plumbing ---------------------------------------------------------
     def emit(self, kind: str, **payload: Any) -> None:
@@ -189,6 +228,20 @@ class Orchestrator:
             if self.adapters[spec.name].edits_workspace:
                 return spec.name
         return self.config.agent_names[0]
+
+    def turn_budget(self, agent: str) -> int:
+        """Seconds this agent's turn may take before the harness cuts it off.
+
+        Whatever the session was told, else whatever the adapter enforces, else
+        the shared default — the number the agent is shown has to be the number
+        that will actually stop it.
+        """
+        adapter = self.adapters.get(agent)
+        return int(
+            self.config.turn_timeout
+            or getattr(adapter, "timeout", 0)
+            or DEFAULT_TURN_TIMEOUT
+        )
 
     def gate_for(self, digest: str) -> GateResult:
         if digest not in self._gate_cache:
@@ -253,6 +306,7 @@ class Orchestrator:
             files=files or None,
             patch_log=self.pending_patch_log.pop(agent, None),
             peer_refused=self.pending_refused.pop(agent, None),
+            turn_timeout=self.turn_budget(agent),
         )
 
     def _system_prompt(self, agent: str, round_no: int) -> str:
@@ -269,15 +323,20 @@ class Orchestrator:
             edits_workspace=adapter.edits_workspace,
         )
 
-    def take_turn(self, agent: str, round_no: int, directive: str = "", ingest: bool = True) -> TurnRecord:
+    def _send(self, agent: str, prompt: str, system: str, round_no: int):
+        """One turn's call, re-sent through a backoff while the failure is the
+        network's fault.
+
+        Returns (reply, envelope, attempts, transient reason that survived).
+
+        A turn that cannot reach the API has not happened: nothing was read,
+        nothing was written, and what comes back is the CLI's own banner. Live,
+        a few minutes without DNS failed three turns in a row this way and ended
+        a session that was making progress — so duet waits the outage out here
+        instead of spending rounds on it.
+        """
         adapter = self.adapters[agent]
-        digest_before = self.workspace.digest()
-        prompt = self._build_prompt(agent, round_no, directive, digest_before)
-        role = self.role_of(agent, round_no)
-
-        self.emit("turn_start", round=round_no, agent=agent, role=role, backend=adapter.backend)
-        reply = adapter.send(prompt, system=self._system_prompt(agent, round_no), round_no=round_no)
-
+        reply = adapter.send(prompt, system=system, round_no=round_no)
         # Parsed before the failure is judged, because a backend can fail
         # *after* the agent has answered and that answer is still worth having.
         # The reverse is what this guards: a CLI's own error banner ("API
@@ -285,6 +344,41 @@ class Orchestrator:
         # CONTINUE — so a turn that never happened was being written down as a
         # considered verdict, spending the round instead of retrying it.
         env = parse_envelope(reply.text, agent=agent, round_no=round_no)
+        attempts = 1
+        reason = ""
+        for delay in self.retry_delays:
+            if reply.ok or env.parse_ok or reply.timed_out:
+                break
+            reason = transient_failure(reply.error) or transient_failure(reply.text)
+            if not reason:
+                break
+            self.emit("backend_retry", round=round_no, agent=agent, attempt=attempts,
+                      of=len(self.retry_delays) + 1, wait=delay, reason=reason,
+                      error=reply.error[:200])
+            self.sleep(delay)
+            reply = adapter.send(prompt, system=system, round_no=round_no)
+            env = parse_envelope(reply.text, agent=agent, round_no=round_no)
+            attempts += 1
+        if reply.ok or env.parse_ok or reply.timed_out:
+            reason = ""
+        else:
+            reason = transient_failure(reply.error) or transient_failure(reply.text)
+        return reply, env, attempts, reason
+
+    def take_turn(self, agent: str, round_no: int, directive: str = "", ingest: bool = True) -> TurnRecord:
+        adapter = self.adapters[agent]
+        digest_before = self.workspace.digest()
+        prompt = self._build_prompt(agent, round_no, directive, digest_before)
+        role = self.role_of(agent, round_no)
+
+        self.emit("turn_start", round=round_no, agent=agent, role=role, backend=adapter.backend)
+        reply, env, attempts, transient = self._send(
+            agent, prompt, self._system_prompt(agent, round_no), round_no
+        )
+        if attempts > 1:
+            # On the record either way: a turn that took four goes to get through
+            # is worth seeing in the transcript, whether or not it then worked.
+            reply.meta["attempts"] = attempts
 
         # Caught here, before the peer's turn, because afterwards it costs one:
         # the peer reads "fixed", checks, finds nothing, and says so.
@@ -314,17 +408,50 @@ class Orchestrator:
                     reply.meta["cost_usd"] = reply.meta["cost_usd"] + first_cost
 
         if not reply.ok and not env.parse_ok:
+            digest_now = self.workspace.digest()
+            changed = digest_now != digest_before
+            peer = self.state.peer_of(agent)
             record = TurnRecord(
                 round=round_no, agent=agent, role=role, envelope=Envelope(agent=agent, round=round_no),
-                digest=digest_before, error=reply.error, meta=reply.meta,
+                digest=digest_now, error=reply.error, meta=dict(reply.meta),
+                # A timeout that left work behind is progress: the peer picks it
+                # up from the files. A timeout that left nothing is a turn that
+                # achieved nothing, and still counts as a failure.
+                cut_off=bool(reply.timed_out and changed),
+                # Nothing reached the model and nothing changed, so there is no
+                # round to charge for it.
+                never_happened=bool(transient and not changed),
             )
             self.turns.append(record)
+            if record.cut_off:
+                budget = human_duration(reply.meta.get("timeout_s") or self.turn_budget(agent))
+                self.pending_directive[peer] = prompts.PEER_CUT_OFF_DIRECTIVE.format(
+                    peer=agent, budget=budget, normal=prompts.NORMAL_DIRECTIVE
+                )
+                self.history.append(
+                    "R%-2d %-6s CUT OFF   at %s — workspace changed, no report; %s takes it on"
+                    % (round_no, agent, budget, peer)
+                )
+                self.emit("turn_cut_off", round=round_no, agent=agent, budget=budget,
+                          digest=digest_now, peer=peer, error=reply.error)
+            elif record.never_happened:
+                self.history.append(
+                    "R%-2d %-6s NO TURN   %s after %d attempt(s) — the round is not spent"
+                    % (round_no, agent, transient, attempts)
+                )
+                self.emit("turn_never_happened", round=round_no, agent=agent,
+                          reason=transient, attempts=attempts, error=reply.error)
             # Counted only now. `round_no` means rounds *finished*: a Ctrl-C
             # during the adapter call used to leave the round marked as taken,
             # so resume started one round late, gave the turn to the other
-            # agent, and dropped the directive this one was owed.
-            self.round_no = max(self.round_no, round_no)
-            self.emit("turn_error", round=round_no, agent=agent, error=reply.error)
+            # agent, and dropped the directive this one was owed. A turn that
+            # never happened is the same case: charging it a round would hand a
+            # resumed session a budget it has not used.
+            if not record.never_happened:
+                self.round_no = max(self.round_no, round_no)
+            self.emit("turn_error", round=round_no, agent=agent, error=reply.error,
+                      cut_off=record.cut_off, never_happened=record.never_happened)
+            self._save()
             return record
 
         if reply.error:
@@ -528,6 +655,7 @@ class Orchestrator:
             # duet makes, so it should be checkable from the record.
             context_chars=len((cfg.context or "").strip()),
             max_rounds=cfg.max_rounds,
+            turn_timeout={name: self.turn_budget(name) for name in cfg.agent_names},
             resumed_from=self.resumed_from or None,
             start_round=self.start_round,
         )
@@ -543,9 +671,13 @@ class Orchestrator:
         status, reason = STATUS_EXHAUSTED, "reached the %d-round limit" % cfg.max_rounds
         round_no = self.start_round - 1
         errors: Dict[str, int] = {name: 0 for name in cfg.agent_names}
+        agent = directive = ""
 
         try:
-            for round_no in range(self.start_round, cfg.max_rounds + 1):
+            # A while loop, not a range: a turn that never reached the model has
+            # to be able to give its round back, and `range` cannot be rewound.
+            while round_no < cfg.max_rounds:
+                round_no += 1
                 agent = order[(round_no - 1) % len(order)]
                 peer = self.state.peer_of(agent)
                 digest = self.workspace.digest()
@@ -559,7 +691,19 @@ class Orchestrator:
 
                 record = self.take_turn(agent, round_no, directive=directive)
 
+                if record.cut_off:
+                    # The clock ran out, not the backend. The work is in the
+                    # workspace and the peer has been told to pick it up; holding
+                    # this against the agent is what ended a live session that
+                    # was 2,500 lines into the job.
+                    continue
                 if record.error:
+                    if record.never_happened:
+                        # The directive was popped for a turn that did not
+                        # happen; the agent is still owed it.
+                        if directive:
+                            self.pending_directive[agent] = directive
+                        round_no -= 1
                     errors[agent] += 1
                     if errors[agent] >= 2:
                         status, reason = STATUS_ERROR, "%s failed twice: %s" % (agent, record.error)

@@ -23,6 +23,25 @@ def _outside_a_duet_session(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_backoff_sleeping(monkeypatch):
+    """The suite never sleeps through the transient-failure backoff.
+
+    The orchestrator waits minutes between re-sending a turn that died on a
+    network blip, which is right in a session and intolerable in a test run. The
+    schedule itself is a pure function (`orchestrator.retry_delays`) and is tested
+    as one; a test that wants to watch the waits happen replaces this with its own
+    recorder, which overrides this fixture.
+
+    `raising=False` because this is autouse over the whole suite: on a tree with
+    no backoff in it — the snapshot the harness replays these tests against to
+    check they catch the bug — a hard setattr would error out every test in every
+    file at setup. That is a red replay that proves nothing about the bug. This
+    way each test still fails there on what it actually asserts.
+    """
+    monkeypatch.setattr("duet.orchestrator.SLEEP", lambda seconds: None, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _own_state_dir(tmp_path_factory, monkeypatch):
     """No test reads or writes the developer's real ~/.duet.
 

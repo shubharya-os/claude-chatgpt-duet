@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- Fixed: a session making real progress ended in ERROR on failures that had nothing to
+  do with the work. Live, one feature session lost the lead's turn to the adapter's
+  hard-coded 1800s limit twice — 1,500 lines of implementation, then 1,060 lines of
+  tests, both on disk — and the "failed twice" rule ended it with "claude timed out
+  after 1800s"; the limit could not be set from any command line, so recovering meant
+  editing `.duet/sessions/<id>/state.json` by hand. Resumed, the machine lost DNS for a
+  few minutes and three turns in a row failed instantly with "Can't reach the API
+  server", which ended the session again and spent rounds 4–6 of the budget on turns
+  that never reached a model. Now: `--turn-timeout MINUTES` on every session command and
+  on `duet resume`, saved with the session so a resume keeps it, and stated to both
+  agents in their prompt as their budget with the instruction to leave the workspace
+  consistent and hand over before it runs out. A turn cut off *after* it changed the
+  workspace is progress, not failure — the peer takes the next turn on the changed
+  files, is told the previous turn was stopped and never reported, and the cut-off turn
+  does not count toward "failed twice" (one that changed nothing still does). A turn
+  that cannot reach the backend — DNS, connection reset, HTTP 5xx, overloaded, rate
+  limited — is re-sent through a backoff totalling about four minutes before it counts
+  as failed, and a turn that never happened gives its round back. Real failures (not
+  signed in, CLI missing, an exhausted allowance, a reply with no envelope) are still
+  reported at once. "Cannot reach the backend" is recognised from the status code as
+  well as from prose: Claude Code prints `API Error: 429 {…}` and `API Error: 503` with
+  a JSON body and spells nothing out, so a 429 or a 5xx attached to an error/status
+  word counts, while a 400 or a 401 stays a real failure — waiting does not shorten a
+  prompt or validate a key. codex's dropped stream ("stream disconnected before
+  completion") counts too; its allowance message still wins over all of it. The
+  words are matched as words, not as substrings: when a CLI reports `is_error` the
+  reply's error is the agent's own message, so `tests/test_dns_resolver.py` or
+  `app/dns.py` in a traceback used to read as a dead network and would have re-run
+  a genuinely failed turn five more times before reporting it.
+
 - Fixed: an ordinary Python project got "no test command was found" whenever duet's own
   interpreter had no pytest — which is exactly how duet is installed by pipx or by
   `install.sh` into `~/.duet/venv`. Detection only ever tried `pytest` on PATH and then

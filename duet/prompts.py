@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Sequence
 
+from duet.adapters.base import human_duration
 from duet.protocol import ENVELOPE_SPEC, Issue
 
 ROLE_LEAD = "lead"
@@ -145,6 +146,7 @@ def turn_prompt(
     files: Optional[Dict[str, str]] = None,
     patch_log: Optional[Sequence[str]] = None,
     peer_refused: Optional[Sequence[str]] = None,
+    turn_timeout: int = 0,
 ) -> str:
     parts: List[str] = []
 
@@ -205,6 +207,10 @@ def turn_prompt(
             % "\n".join("- %s" % r for r in why_open)
         )
 
+    if turn_timeout:
+        parts.append("\n=== YOUR TIME BUDGET ===\n%s"
+                     % TIME_BUDGET_NOTE.format(budget=human_duration(turn_timeout)))
+
     parts.append("\n=== YOUR TURN ===\n%s" % (directive.strip() or NORMAL_DIRECTIVE))
     parts.append(
         "\nReply with your message to %s, then the JSON envelope as the last thing "
@@ -226,6 +232,20 @@ happened. Neither of you should sign off on a page you have only read.
 
 Anything you deliberately want left empty or tiny can carry `data-duet-ignore`,
 which exempts it and everything inside it."""
+
+TIME_BUDGET_NOTE = """\
+This turn is cut off after {budget}. When the harness stops the call, anything
+you have not written to a file and anything you have not said is gone — your
+peer sees the workspace and nothing else.
+
+So work to the clock. If the whole job does not fit, do one coherent piece of
+it, leave the workspace consistent — nothing half-edited, nothing that no longer
+imports, no test file that is only half written — and hand over in your message:
+what you did, what you checked, and what the next turn should pick up. Finishing
+early with a clean workspace and a clear handover beats being cut off mid-edit.
+There is no penalty for taking another turn; this is a conversation, not one
+shot.
+"""
 
 NORMAL_DIRECTIVE = """\
 Do the most useful next thing, then report it. Concretely:
@@ -309,6 +329,22 @@ permitted, or take the claim out. {commands}
 Then send your whole reply again, ending with the envelope. It replaces the one
 above; your peer only ever sees this one.
 """
+
+PEER_CUT_OFF_DIRECTIVE = """\
+YOUR PEER'S TURN WAS CUT OFF — {peer} ran out of its {budget} turn budget and the
+harness stopped the call. It sent no message and no envelope, so there is nothing
+from it to answer: the workspace below is the whole of what it left you, and it
+may be half-finished.
+
+Take the next turn on it.
+1. Look at what actually changed and judge it on its own: incomplete is expected
+   here, wrong is not. Finish it, or fix it, or say specifically what is broken.
+2. Say in your message what state you found it in — your peer never got to, and
+   it will not remember.
+3. This is not a failure on their part and it does not count as one. Do not spend
+   the turn on it.
+
+{normal}"""
 
 HANDOFF_DIRECTIVE = """\
 Your peer has raised something against you and voted {verdict}. Answer it

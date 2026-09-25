@@ -580,6 +580,10 @@ def test_a_backend_error_banner_is_not_a_verdict(tmp_path):
     defaults to CONTINUE, and a turn that never happened was written into the
     transcript as a considered verdict — spending a round, and showing the peer
     a banner as though its partner had said it.
+
+    A banner like this one is now retried before it counts as anything at all
+    (tests/test_turn_limits.py), so what is checked here is the part that must
+    hold either way: the banner is never this agent's position.
     """
     from duet.adapters.base import AgentReply
 
@@ -606,9 +610,10 @@ def test_a_backend_error_banner_is_not_a_verdict(tmp_path):
     orch.run()
 
     first = orch.turns[0]
-    assert first.error, "a backend failure must be recorded as one"
     assert first.envelope.verdict != "CONTINUE" or not first.envelope.message
     assert banner not in (first.envelope.message or "")
+    # And the blip is on the record, as the retry it was rather than as a turn.
+    assert first.meta.get("attempts") == 2
 
 
 def test_an_answer_that_arrives_despite_a_backend_error_is_kept(tmp_path):

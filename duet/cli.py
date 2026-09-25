@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from duet import __version__, prompts, ui
 from duet.adapters import REGISTRY
 from duet.adapters import build as build_adapter
-from duet.adapters.base import Adapter
+from duet.adapters.base import Adapter, DEFAULT_TURN_TIMEOUT, human_duration
 from duet import gate as gate_detect
 from duet import build as build_cmd
 from duet import page as page_check
@@ -41,6 +41,13 @@ from duet.protocol import BLOCKING_SEVERITIES, SEVERITIES, parse_envelope
 
 PREVIEW_CHARS = 700
 ERROR_CHARS = 1200
+
+TURN_TIMEOUT_HELP = (
+    "minutes one agent's turn may take before the harness cuts it off "
+    "(default %s). It is stated to both agents as their budget, and a turn cut "
+    "off after it changed the workspace hands over to the peer instead of "
+    "failing the session." % human_duration(DEFAULT_TURN_TIMEOUT)
+)
 
 
 # --------------------------------------------------------------------------
@@ -71,6 +78,12 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
                                  ui.yellow("none — they can only agree by argument")))
             say("  %s %s goes first, up to %d rounds"
                   % (ui.dim("order:    "), (event.get("order") or ["?"])[0], event.get("max_rounds", 0)))
+            budgets = sorted({int(v) for v in (event.get("turn_timeout") or {}).values()})
+            if budgets:
+                say("  %s %s per turn%s"
+                    % (ui.dim("turn:     "),
+                       " / ".join(human_duration(b) for b in budgets),
+                       ui.dim(" (--turn-timeout MINUTES)")))
             say(ui.rule())
         elif kind == "turn_start":
             say("\n%s %s %s" % (
@@ -94,6 +107,8 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
                 say("     " + ui.dim(event["ingest"]))
             for note in event.get("notes") or []:
                 say("     " + ui.yellow("note: " + note))
+        elif kind == "turn_error" and event.get("cut_off"):
+            pass   # turn_cut_off already said what happened, and it was not an error
         elif kind == "turn_error":
             # Not clipped at 400: the errors worth reading — a usage limit, a
             # sign-out — carry their fix in the last sentence, and cutting the
@@ -101,7 +116,22 @@ def make_reporter(agents: List[str], verbose: bool = True, as_json: bool = False
             error = str(event.get("error") or "")
             if len(error) > ERROR_CHARS:
                 error = error[:ERROR_CHARS].rstrip() + " …"
-            say("  " + ui.red("error: ") + ui.wrap(error).lstrip())
+            colour = ui.yellow if (event.get("cut_off") or event.get("never_happened")) else ui.red
+            say("  " + colour("error: ") + ui.wrap(error).lstrip())
+        elif kind == "backend_retry":
+            say("  " + ui.yellow("backend blip") + ui.dim(
+                " (%s) — attempt %s of %s failed; retrying in %ss"
+                % (event.get("reason"), event.get("attempt"), event.get("of"),
+                   event.get("wait"))))
+        elif kind == "turn_cut_off":
+            say("  " + ui.yellow("cut off at %s" % event.get("budget"))
+                + ui.dim(" — the workspace changed, so %s carries it on. Not a failed turn."
+                         % event.get("peer")))
+            say("     " + ui.dim("give turns longer with --turn-timeout MINUTES"))
+        elif kind == "turn_never_happened":
+            say("  " + ui.yellow("the turn never happened")
+                + ui.dim(" — %s after %s attempt(s); the round is not spent"
+                         % (event.get("reason"), event.get("attempts"))))
         elif kind == "patches":
             for line in event.get("log") or []:
                 say("     " + ui.dim("fs: " + line))
@@ -180,6 +210,28 @@ def read_context(args: argparse.Namespace) -> str:
     return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
+def turn_timeout_seconds(args: argparse.Namespace) -> Optional[int]:
+    """`--turn-timeout MINUTES` as seconds, or None when it was not given.
+
+    Minutes on the command line because that is the unit the limit is felt in —
+    a turn is tens of minutes — and seconds everywhere inside, because that is
+    what subprocess timeouts take.
+    """
+    minutes = getattr(args, "turn_timeout", None)
+    if minutes is None:
+        return None
+    try:
+        minutes = int(minutes)
+    except (TypeError, ValueError):
+        raise SystemExit("--turn-timeout takes a number of minutes")
+    if minutes < 1:
+        raise SystemExit(
+            "--turn-timeout %s: a turn needs at least a minute. Leave it out for "
+            "the default of %s." % (minutes, human_duration(DEFAULT_TURN_TIMEOUT))
+        )
+    return minutes * 60
+
+
 def build_config(args: argparse.Namespace) -> Config:
     root = str(Path(args.root).expanduser().resolve())
     load_env_file(root)
@@ -216,6 +268,9 @@ def build_config(args: argparse.Namespace) -> Config:
             cfg.gate_was_detected = True
     if getattr(args, "rounds", None) is not None:
         cfg.max_rounds = args.rounds
+    turn_timeout = turn_timeout_seconds(args)
+    if turn_timeout is not None:
+        cfg.turn_timeout = turn_timeout
     if getattr(args, "max_debate", None) is not None:
         cfg.max_debate = args.max_debate
     if getattr(args, "start", ""):
@@ -1771,6 +1826,12 @@ def cmd_resume(args: argparse.Namespace) -> int:
         cfg.gate = args.gate
     if getattr(args, "rounds", None) is not None:
         cfg.max_rounds = args.rounds
+    # Not carried over silently: the session that died on its turn limit is
+    # exactly the one being resumed, and raising the limit was the reason
+    # hand-editing state.json was the only way out.
+    turn_timeout = turn_timeout_seconds(args)
+    if turn_timeout is not None:
+        cfg.turn_timeout = turn_timeout
 
     reason, fixes = _resume_blocker(data, path.name, cfg.max_rounds)
     if reason:
@@ -2032,6 +2093,11 @@ def cmd_review(args: argparse.Namespace) -> int:
         adapter = build_adapter(
             spec.backend, name=reviewer, cwd=root, model=spec.model, config=spec.options
         )
+        # A review is one call, and it is held to the same limit a turn is: a
+        # project that pinned `turn_timeout` because its reviews are long should
+        # not have to pin it twice.
+        if cfg.turn_timeout:
+            adapter.set_turn_timeout(cfg.turn_timeout)
     except (SystemExit, ValueError) as exc:   # unknown pair or backend, bad --file
         return fail(str(exc))
 
@@ -2263,6 +2329,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--no-gate", action="store_true",
                        help="run without a gate — the two of them can then only agree by argument")
     p_run.add_argument("--rounds", type=int, help="maximum rounds (default 12)")
+    p_run.add_argument("--turn-timeout", type=int, metavar="MINUTES", help=TURN_TIMEOUT_HELP)
     p_run.add_argument("--max-debate", type=int, help="rounds an issue may stay open before arbitration (default 3)")
     p_run.add_argument(
         "--pair",
@@ -2297,6 +2364,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-gate", action="store_true",
                        help="run without a gate — most of these refuse to")
         p.add_argument("--rounds", type=int, help="maximum rounds (default 12)")
+        p.add_argument("--turn-timeout", type=int, metavar="MINUTES", help=TURN_TIMEOUT_HELP)
         p.add_argument("--max-debate", type=int,
                        help="rounds an issue may stay open before arbitration (default 3)")
         p.add_argument("--pair", metavar="A+B", help="which two agents, and who leads")
@@ -2432,6 +2500,9 @@ def build_parser() -> argparse.ArgumentParser:
     common(p_resume)
     p_resume.add_argument("session", nargs="?",
                           help="session id (default: the newest one that has not agreed yet)")
+    p_resume.add_argument("--turn-timeout", type=int, metavar="MINUTES",
+                          help=TURN_TIMEOUT_HELP + " Without it, the limit the dead "
+                               "session was started with is kept.")
     p_resume.add_argument("--rounds", type=int, metavar="N",
                           help="new total round budget, counting the rounds already used")
     p_resume.add_argument("--gate", metavar="CMD",

@@ -132,6 +132,11 @@ class Config:
     gate: str = ""
     gate_was_detected: bool = False
     gate_timeout: int = 900
+    # How long one agent's turn may take, in seconds. 0 means each backend's own
+    # default. It is on the config — not only on the agent options — so that
+    # `--turn-timeout` is saved with the session and `duet resume` keeps it;
+    # before this the limit could only be changed by editing state.json by hand.
+    turn_timeout: int = 0
     # A command the agents may run that is not the gate: the project's tests,
     # for a session (a plan) whose finish line is not a green test run.
     allow_run: str = ""

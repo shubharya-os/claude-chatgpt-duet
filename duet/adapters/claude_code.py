@@ -16,11 +16,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from duet.adapters.base import (
+    DEFAULT_TURN_TIMEOUT,
     RUNTIME_FIX,
     Adapter,
     AgentReply,
     Probe,
     env_with_sibling_path,
+    human_duration,
     looks_unrunnable,
 )
 
@@ -89,7 +91,7 @@ class ClaudeCodeAdapter(Adapter):
         launch, binary, self.installed_globally = self.resolve_launch(DEFAULT_CANDIDATES)
         self.bin = binary or launch[0]   # sets launch to one element, then
         self.launch = launch             # widen it for the npx form
-        self.timeout = int(self.config.get("timeout", 1800))
+        self.timeout = int(self.config.get("timeout", DEFAULT_TURN_TIMEOUT))
         self.permission_mode = self.config.get("permission_mode", "acceptEdits")
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
         self.allowed_tools: List[str] = list(self.config.get("allowed_tools") or [])
@@ -194,7 +196,15 @@ class ClaudeCodeAdapter(Adapter):
                 "You can also point duet at it with DUET_CLAUDE_BIN." % INSTALL_HINT,
             )
         except subprocess.TimeoutExpired:
-            return AgentReply(text="", error="claude timed out after %ds" % self.timeout)
+            # Marked, not just described: whatever this turn had already written
+            # is still in the workspace, so the orchestrator treats a timeout
+            # that changed files as progress rather than as a dead backend.
+            return AgentReply(
+                text="",
+                error="claude timed out after %s"
+                % human_duration(self.timeout),
+                meta={"backend": self.backend, "timed_out": True, "timeout_s": self.timeout},
+            )
 
         stdout = (proc.stdout or "").strip()
         stderr = (proc.stderr or "").strip()

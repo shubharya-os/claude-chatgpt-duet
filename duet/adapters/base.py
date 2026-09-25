@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 
 @dataclass
@@ -16,6 +17,143 @@ class AgentReply:
     @property
     def ok(self) -> bool:
         return not self.error
+
+    @property
+    def timed_out(self) -> bool:
+        """True when the harness cut this turn off at its time limit.
+
+        A timeout is not a backend failure: the agent was working, and whatever
+        it had already written to the workspace is still there. The caller has to
+        be able to tell the two apart, so every adapter that enforces a turn
+        limit marks the reply instead of only saying so in prose.
+        """
+        return bool(self.meta.get("timed_out"))
+
+
+# How long one turn may take when nothing says otherwise. Both CLI adapters used
+# to hard-code this, and it could not be changed from the command line at all —
+# so a lead doing a large, legitimate piece of work hit the same 1800s twice and
+# the session died on it. One default, one place, and `--turn-timeout` overrides.
+DEFAULT_TURN_TIMEOUT = 1800
+
+
+def human_duration(seconds: Any) -> str:
+    """"30 minutes", "1 hour 15 minutes", "90 seconds" — for prompts and errors."""
+    try:
+        total = int(float(seconds))
+    except (TypeError, ValueError):
+        return "an unknown time"
+    if total < 120:
+        return "%d second%s" % (total, "" if total == 1 else "s")
+    minutes, hours = total // 60, total // 3600
+    if hours < 1:
+        return "%d minute%s" % (minutes, "" if minutes == 1 else "s")
+    rest = minutes - hours * 60
+    out = "%d hour%s" % (hours, "" if hours == 1 else "s")
+    if not rest:
+        return out
+    return out + " %d minute%s" % (rest, "" if rest == 1 else "s")
+
+
+# A failure that is the network's or the backend's, not the work's. A turn that
+# died on one of these never happened: nothing was read, nothing was written, and
+# what came back is a banner rather than an answer. Observed live: a few minutes
+# without DNS ended a session that was making progress, because every turn
+# failed instantly with "Can't reach the API server ... (ENOTFOUND)" and two of
+# them in a row tripped the "failed twice" rule.
+TRANSIENT_MARKERS = (
+    "can't reach the api", "cannot reach the api", "could not reach the api",
+    "unable to reach the api", "check your internet",
+    "enotfound", "eai_again", "econnreset", "econnaborted", "etimedout",
+    "connection reset", "connection aborted", "connection closed",
+    "network error", "network is unreachable", "socket hang up",
+    "temporary failure in name resolution", "dns",
+    "http 429", "http 500", "http 502", "http 503", "http 504",
+    "status 429", "status 500", "status 502", "status 503", "status 504",
+    "429 too many requests", "too many requests",
+    "bad gateway", "service unavailable", "gateway timeout",
+    "internal server error", "overloaded", "server error",
+    "temporarily unavailable", "please try again",
+    # codex's half of the same failure: when the SSE stream drops mid-turn it
+    # says this and nothing else, and reqwest underneath it says the second. A
+    # usage limit can also end a stream, which is why DURABLE_MARKERS is
+    # consulted first — codex's allowance message always carries the words
+    # "allowance" and "quota" by the time duet reports it. A bare "stream error"
+    # is deliberately not here: it is not always the network, and this function
+    # would rather report a failure it does not know than wait on a real one.
+    "stream disconnected", "error sending request",
+)
+
+# The prose above only fires when the backend spells the status out in words, and
+# the one duet runs most does not: Claude Code prints "API Error: 429 {…}" and
+# "API Error: 503" with a JSON body, so the number is the only readable part. A
+# 429 or a 5xx matched this way is exactly the "rate limited / HTTP 5xx" case
+# that has to be waited out rather than reported as the agent's failure. The
+# status has to sit next to an error/status/http/code word, so a message that
+# merely contains "503" somewhere is not mistaken for one, and 4xx other than
+# 429 is left alone: a 400 or a 401 does not improve by waiting.
+TRANSIENT_STATUS = re.compile(
+    r"(?:error|status|code|http)[\s:=#-]{0,3}(429|500|502|503|504|529)(?!\d)"
+)
+
+
+def _standalone(markers: Sequence[str]) -> "re.Pattern[str]":
+    """Match each marker as its own token, not as a substring of a name.
+
+    The same mistake the status matcher above already guards against, one tier
+    up: `503` had to be kept from matching `test_error_503_handling.py`, and
+    `dns` has to be kept from matching `tests/test_dns_resolver.py`,
+    `dns_cache.py` and `app/dns.py`. It matters because what gets classified is
+    not only a banner — when the CLI reports `is_error`, the reply's error *is*
+    the agent's own message, truncated — so a turn that really failed while the
+    pair happened to be working on networking code would be re-sent five more
+    times, at a full turn's cost each, before duet said what had gone wrong.
+
+    The lookarounds refuse a marker that sits inside a path or an identifier;
+    the last one refuses a file extension, so `dns.py` is a file and `or DNS.`
+    at the end of a sentence is still the network. Only the transient list is
+    matched this way. DURABLE_MARKERS stays a plain substring search on purpose:
+    over-matching there reports a failure duet is unsure about instead of
+    waiting on it, and `insufficient_quota` — the shape the OpenAI backend
+    actually returns — is a durable marker glued into an identifier.
+    """
+    joined = "|".join(re.escape(m) for m in markers)
+    return re.compile(r"(?<![\w/-])(%s)(?![\w/-])(?!\.[A-Za-z0-9]{1,4}\b)" % joined)
+
+# These win over any marker above. A signed-out CLI, a missing binary, a rejected
+# key and an exhausted allowance all describe a state that waiting will not
+# change — retrying them for four minutes only delays telling the truth. The
+# allowance case matters most: codex reports it with the words "rate limit", and
+# duet already has a place it writes that verdict down.
+DURABLE_MARKERS = (
+    "usage limit", "allowance", "quota", "try again at", "try again on",
+    "try again after", "not signed in", "not logged in", "sign in", "login",
+    "api key", "was not found", "install it with", "insufficient",
+)
+
+TRANSIENT_RE = _standalone(TRANSIENT_MARKERS)
+
+
+def transient_failure(text: str) -> str:
+    """The marker that makes this failure worth retrying, or "" if it is real.
+
+    Deliberately conservative: a failure duet does not recognise is reported to
+    the pair as it always was. Getting this wrong in the other direction is
+    worse — it would sit in a backoff loop waiting for a sign-in to fix itself.
+    """
+    low = " ".join((text or "").lower().split())
+    if not low:
+        return ""
+    for marker in DURABLE_MARKERS:
+        if marker in low:
+            return ""
+    found = TRANSIENT_RE.search(low)
+    if found:
+        return found.group(1)
+    status = TRANSIENT_STATUS.search(low)
+    if status:
+        return "http %s" % status.group(1)
+    return ""
 
 
 # A CLI that cannot start says nothing about whether you are signed in. These
@@ -113,6 +251,22 @@ class Adapter:
     # -- interface --------------------------------------------------------
     def send(self, prompt: str, system: str = "", round_no: int = 0) -> AgentReply:
         raise NotImplementedError
+
+    def set_turn_timeout(self, seconds: int) -> None:
+        """Give this agent `seconds` for one turn, whatever its backend's default.
+
+        Set on the adapter rather than only in the spec it was built from, so an
+        adapter handed to the orchestrator ready-made obeys the same limit as one
+        duet built itself.
+        """
+        try:
+            seconds = int(seconds)
+        except (TypeError, ValueError):
+            return
+        if seconds <= 0:
+            return
+        self.config["timeout"] = seconds
+        self.timeout = seconds
 
     def allow_gate(self, gate: str) -> None:
         """Let this agent run the acceptance gate itself, if it needs permission.

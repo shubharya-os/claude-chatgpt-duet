@@ -637,8 +637,30 @@ duet sessions        # every session in this workspace
 ```
 
 Useful flags for `run`: `--gate` (your tests — the most valuable one), `--pair`,
-`--rounds`, `--accept "what done means"`, `--swap N` to trade places, `--commit`,
-`--json`.
+`--rounds`, `--turn-timeout MINUTES`, `--accept "what done means"`, `--swap N` to
+trade places, `--commit`, `--json`.
+
+### The clock, and the network
+
+A turn gets 30 minutes by default. `--turn-timeout MINUTES` changes it on every
+session command and on `duet resume`, and it is saved with the session, so a
+resumed one keeps it. Both agents are told the budget in their prompt, with the
+instruction to leave the workspace consistent and hand over before it runs out —
+a lead that does not know it is on a clock tries to do everything in one turn.
+
+If a turn is cut off after it has changed the workspace, that is progress and not
+a failure: the peer takes the next turn on the files it left, and is told the
+previous turn was stopped and never reported. A turn cut off having changed
+nothing still counts as a failed turn.
+
+A turn that cannot reach the backend at all — DNS gone, connection reset, HTTP
+5xx, overloaded, rate-limited — is re-sent through a backoff that waits out about
+four minutes before the turn counts as failed, and a turn that never reached a
+model does not spend a round of the budget. The status code counts as well as the
+words: Claude Code prints `API Error: 429 {…}` with a JSON body and spells nothing
+out, so a 429 or a 5xx is waited out, while a 400 or a 401 is not. Real failures
+(not signed in, CLI missing, an exhausted allowance, a reply with no envelope) are
+still reported at once, because waiting does not fix them.
 
 A session is 20–40 minutes of two subscriptions, and an adapter timeout or a
 Ctrl-C used to throw the whole argument away. `duet resume` picks it up from the
@@ -649,6 +671,7 @@ the arbitration rulings and each agent's own thread with its backend intact:
 duet resume                        # the newest unfinished session
 duet resume 20250104-142211-9f3a   # or a named one
 duet resume --rounds 20            # a new total budget, counting rounds already used
+duet resume --turn-timeout 60      # longer turns than the session that died had
 duet resume --gate "pytest -q"     # a different gate than the one it recorded
 ```
 
@@ -686,7 +709,7 @@ pipe.
 Four of those were found by pointing duet's own ChatGPT side at duet's core and asking
 for correctness bugs. All four were real. That's the premise working on its author.
 
-563 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
+620 tests, no network or credentials needed. CI on Python 3.9, 3.11 and 3.13.
 
 ```bash
 pytest -q

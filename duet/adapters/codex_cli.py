@@ -18,11 +18,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from duet.adapters.base import (
+    DEFAULT_TURN_TIMEOUT,
     RUNTIME_FIX,
     Adapter,
     AgentReply,
     Probe,
     env_with_sibling_path,
+    human_duration,
     looks_unrunnable,
 )
 
@@ -259,7 +261,7 @@ class CodexCliAdapter(Adapter):
         launch, binary, self.installed_globally = self.resolve_launch(DEFAULT_CANDIDATES)
         self.bin = binary or launch[0]   # sets launch to one element, then
         self.launch = launch             # widen it for the npx form
-        self.timeout = int(self.config.get("timeout", 1800))
+        self.timeout = int(self.config.get("timeout", DEFAULT_TURN_TIMEOUT))
         self.sandbox = str(self.config.get("sandbox", "workspace-write"))
         self.extra_args: List[str] = list(self.config.get("extra_args") or [])
         # Continuity is cheap when it works and costs nothing when it does not:
@@ -325,7 +327,15 @@ class CodexCliAdapter(Adapter):
                         "`codex login` to sign in with your ChatGPT account." % INSTALL_HINT,
                     )
                 except subprocess.TimeoutExpired:
-                    return AgentReply(text="", error="codex timed out after %ds" % self.timeout)
+                    # See the same branch in the claude adapter: a turn cut off at
+                    # its limit leaves its work behind, so say so in the reply.
+                    return AgentReply(
+                        text="",
+                        error="codex timed out after %s"
+                        % human_duration(self.timeout),
+                        meta={"backend": self.backend, "timed_out": True,
+                              "timeout_s": self.timeout},
+                    )
 
                 stdout = (proc.stdout or "").strip()
                 combined = (stdout + "\n" + (proc.stderr or "")).strip()
