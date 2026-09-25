@@ -369,7 +369,7 @@ RECOGNISED = [
     # Xcode's conventional directory, and its test-target directories.
     ("Tests/FooTests.swift", True),
     ("Tests/Helpers.swift", True),          # anything inside a test directory
-    ("TwineTests/AppLogicTests.swift", True),
+    ("GalleryTests/AppLogicTests.swift", True),
     ("MyAppTests/FooTests.swift", True),
     ("MyAppUITests/LoginUITests.swift", True),
     ("UITests/Flow.swift", True),
@@ -414,13 +414,13 @@ def test_what_counts_as_a_test_file(tmp_path, rel, is_test):
 
 def test_a_changed_swift_test_satisfies_the_add_rule(tmp_path):
     """The `add` veto in an Xcode layout, which compared two empty sets."""
-    (tmp_path / "TwineTests").mkdir()
-    suite = tmp_path / "TwineTests" / "AppLogicTests.swift"
+    (tmp_path / "GalleryTests").mkdir()
+    suite = tmp_path / "GalleryTests" / "AppLogicTests.swift"
     suite.write_text("func testOne() { XCTAssertTrue(true) }\n")
     wf = workflows.get("add")
     state = {}
     wf.begin(str(tmp_path), state)
-    assert "TwineTests/AppLogicTests.swift" in state["baseline_tests"]
+    assert "GalleryTests/AppLogicTests.swift" in state["baseline_tests"]
 
     # Untouched: still "no test was added or extended".
     assert "No test was added or extended" in (wf.veto(str(tmp_path), state) or "")

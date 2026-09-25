@@ -220,8 +220,8 @@ def test_an_xcode_project_is_not_called_a_workspace_with_no_tests(tmp_path):
     passed", and a *detected* gate (a Makefile whose `test:` target runs
     xcodebuild) made `duet build` refuse to start with exit 3.
     """
-    (tmp_path / "TwineTests").mkdir()
-    (tmp_path / "TwineTests" / "AppLogicTests.swift").write_text(
+    (tmp_path / "GalleryTests").mkdir()
+    (tmp_path / "GalleryTests" / "AppLogicTests.swift").write_text(
         "final class AppLogicTests: XCTestCase {\n    func testScore() {}\n}\n")
     assert build.has_tests(str(tmp_path)) is True
     assert build.gate_proves_nothing("true", str(tmp_path)) is False

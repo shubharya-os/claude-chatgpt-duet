@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: duet could not see a Swift test. Test directories were matched
+  case-sensitively, so Xcode's conventional `Tests/` never counted, and no glob knew
+  about `*Tests.swift` — an iOS repo looked like a repo with no tests at all, so `add`
+  said no test had been added and `fix` had nothing to replay. Three live sessions in
+  one ended EXHAUSTED with a green gate and ~90 XCTest cases between them. Test target
+  directories (`GalleryTests/`, `MyAppUITests/`) count too, and `Contests/` still does
+  not. The same pass adds C#, Elixir, Scala, PHP and Dart suffixes.
+- Under an `xcodebuild` gate, a test file written during the session is not in the
+  original project.pbxproj, so replaying it against the original code would build the
+  old target and pass without ever running it. That now reports "could not run" and
+  says why, rather than "your tests pass on the original".
+- `duet build`'s "is this gate green with nothing here to have passed" check asked a
+  second, hand-copied list of test conventions, which had drifted the same way: no
+  Swift, and `tests/` only at the top level. An iOS repo whose gate duet detected
+  itself — a Makefile running `xcodebuild` — was refused with exit 3 for having no
+  tests, next to its ninety XCTest cases. Both questions now go to one detector.
+- Fixed: gate detection handed iOS projects `pytest -q`. macOS matches filenames
+  without regard to case, so the test for "does this project have Python tests"
+  — `(root / "tests").is_dir()` — was also true of Xcode's `Tests/`. The detected
+  gate then collected nothing, exited 5 and was red every round, which blocks both
+  sign-offs for the whole session. A directory is now read before it is believed;
+  an empty `tests/` still means pytest, since that is where a greenfield project is
+  about to write them.
+
 ## 0.7.0
 
 - A Claude Code plugin, served from this repository: `/plugin marketplace add
@@ -18,29 +44,6 @@
   claim about what the tests do is checked rather than traced by hand.
 - Fixed: the plan rule counted `.pytest_cache/` as a changed file. It now shares the
   workspace's ignore list.
-- Fixed: duet could not see a Swift test. Test directories were matched
-  case-sensitively, so Xcode's conventional `Tests/` never counted, and no glob knew
-  about `*Tests.swift` — an iOS repo looked like a repo with no tests at all, so `add`
-  said no test had been added and `fix` had nothing to replay. Three live sessions in
-  one ended EXHAUSTED with a green gate and ~90 XCTest cases between them. Test target
-  directories (`TwineTests/`, `MyAppUITests/`) count too, and `Contests/` still does
-  not. The same pass adds C#, Elixir, Scala, PHP and Dart suffixes.
-- Under an `xcodebuild` gate, a test file written during the session is not in the
-  original project.pbxproj, so replaying it against the original code would build the
-  old target and pass without ever running it. That now reports "could not run" and
-  says why, rather than "your tests pass on the original".
-- `duet build`'s "is this gate green with nothing here to have passed" check asked a
-  second, hand-copied list of test conventions, which had drifted the same way: no
-  Swift, and `tests/` only at the top level. An iOS repo whose gate duet detected
-  itself — a Makefile running `xcodebuild` — was refused with exit 3 for having no
-  tests, next to its ninety XCTest cases. Both questions now go to one detector.
-- Fixed: gate detection handed iOS projects `pytest -q`. macOS matches filenames
-  without regard to case, so the test for "does this project have Python tests"
-  — `(root / "tests").is_dir()` — was also true of Xcode's `Tests/`. The detected
-  gate then collected nothing, exited 5 and was red every round, which blocks both
-  sign-offs for the whole session. A directory is now read before it is believed;
-  an empty `tests/` still means pytest, since that is where a greenfield project is
-  about to write them.
 
 ## Earlier
 

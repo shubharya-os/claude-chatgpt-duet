@@ -47,7 +47,7 @@ TEST_GLOBS = (
 # Xcode's conventional `Tests/` is the same directory as Go's `tests/`, and a
 # case-sensitive comparison made every Swift project look like it had none.
 TEST_DIRS = ("tests", "test", "spec", "specs", "__tests__")
-# Xcode names a test target's directory after the target: TwineTests/,
+# Xcode names a test target's directory after the target: GalleryTests/,
 # MyAppUITests/. The capital T is what distinguishes those from an ordinary
 # directory that merely ends in the letters "tests" — Contests/, Latests/ —
 # so this suffix is matched case-sensitively, unlike TEST_DIRS above.
@@ -71,7 +71,7 @@ def is_test_dir(part: str) -> bool:
 
     Two separate rules, because they need different case handling. `Tests`,
     `tests` and `TESTS` are all the same directory, so the exact names are
-    compared case-insensitively. `TwineTests` is an Xcode test target and
+    compared case-insensitively. `GalleryTests` is an Xcode test target and
     `Contests` is not, and the only thing that tells them apart is the capital
     T — so the suffix rule is case-sensitive, and requires something in front
     of the suffix.
